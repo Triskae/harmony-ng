@@ -40,6 +40,82 @@ def check(cond, name, detail=""):
         print("  FAIL %s %s" % (name, detail))
 
 
+def plugin_archive(path, pid, version, min_version=None):
+    """A plugin archive (manifest.json at the top, as build_plugins.sh packs it); its SHA-256"""
+    import hashlib
+    import io
+    import tarfile
+    manifest = {"id": pid, "name": pid, "version": version, "entrypoint": "run.sh", "files": ["manifest.json", "run.sh"]}
+    if min_version is not None:
+        manifest["min_harmony_version"] = min_version
+    with tarfile.open(path, "w:gz") as tar:
+        for name, data in (("manifest.json", json.dumps(manifest).encode()), ("run.sh", b"#!/bin/sh\nsleep 60\n")):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o755
+            tar.addfile(info, io.BytesIO(data))
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def check_min_version_and_next(hub, repo_dir):
+    """The top level of an entry is the release every Hub runs; "next" holds releases that need a
+    newer HarmonyNG: the newest one this Hub meets stands in for the entry, the others are left
+    out. A top level this Hub cannot run, without a next release it can, is incompatible; a
+    minimum that is not a version string is refused"""
+    base = "http://127.0.0.1:9994"
+    v4_sha = plugin_archive(os.path.join(repo_dir, "nx-1.3.0.tar.gz"), "nx", "1.3.0", "99.0.0")
+    v3_sha = plugin_archive(os.path.join(repo_dir, "nx-1.2.0.tar.gz"), "nx", "1.2.0")
+    met_sha = plugin_archive(os.path.join(repo_dir, "met-1.4.0.tar.gz"), "met", "1.4.0", "0.0.1")
+    bad_sha = plugin_archive(os.path.join(repo_dir, "bad-1.0.0.tar.gz"), "bad", "1.0.0", 4)
+    v4 = {"version": "1.3.0", "min_harmony_version": "99.0.0", "download_url": f"{base}/nx-1.3.0.tar.gz", "sha256": v4_sha}
+    met = {"version": "1.4.0", "min_harmony_version": "0.0.1", "download_url": f"{base}/met-1.4.0.tar.gz", "sha256": met_sha}
+    repo = {"repo_name": "t", "plugins": [
+        {"id": "nx", "name": "nx", "version": "1.2.0", "download_url": f"{base}/nx-1.2.0.tar.gz", "sha256": v3_sha,
+         "next": v4},
+        {"id": "met", "name": "met", "version": "1.2.0", "download_url": f"{base}/nx-1.2.0.tar.gz", "sha256": v3_sha,
+         "next": [v4, met]},
+        {"id": "only4", "name": "only4", "version": "1.3.0", "min_harmony_version": "99.0.0",
+         "download_url": f"{base}/nx-1.3.0.tar.gz", "sha256": v4_sha},
+        {"id": "bad", "name": "bad", "version": "1.0.0", "min_harmony_version": 4,
+         "download_url": f"{base}/bad-1.0.0.tar.gz", "sha256": bad_sha},
+    ]}
+    with open(os.path.join(repo_dir, "repository.json"), "w") as f:
+        json.dump(repo, f)
+    handler = lambda *args, **kwargs: http.server.SimpleHTTPRequestHandler(*args, directory=repo_dir, **kwargs)
+    socketserver.TCPServer.allow_reuse_address = True
+    httpd = socketserver.TCPServer(("127.0.0.1", 9994), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    try:
+        st, res = hub.http_post("/api/plugins/repositories", {"action": "add", "url": f"{base}/repository.json"})
+        check(st == 200, "test repository added", str((st, res)))
+        st, res = hub.http_get("/api/plugins/marketplace?refresh=1")
+        cat = {e.get("id"): e for e in res.get("marketplace", [])}
+        nx = cat.get("nx", {})
+        check(nx.get("version") == "1.2.0" and nx.get("compatible") is True and nx.get("sha256") == v3_sha
+              and "next" not in nx, "a next release this Hub cannot run: the top level stays", str(nx))
+        m = cat.get("met", {})
+        check(m.get("version") == "1.4.0" and m.get("sha256") == met_sha and m.get("compatible") is True
+              and m.get("min_harmony_version") == "0.0.1" and "next" not in m,
+              "the newest next release this Hub meets stands in", str(m))
+        check(cat.get("only4", {}).get("compatible") is False, "only a release this Hub cannot run: incompatible",
+              str(cat.get("only4")))
+        check(cat.get("bad", {}).get("compatible") is False, "a minimum that is not a version: incompatible", str(cat.get("bad")))
+        st, res = hub.http_post("/api/plugins/install", {"url": f"{base}/nx-1.3.0.tar.gz", "sha256": v4_sha})
+        check(st != 200 and "99.0.0" in str(res.get("error", "")), "the release needing 99.0.0 is refused", str((st, res)))
+        st, res = hub.http_post("/api/plugins/install", {"url": f"{base}/bad-1.0.0.tar.gz", "sha256": bad_sha})
+        check(st != 200 and "invalid min_harmony_version" in str(res.get("error", "")), "invalid minimum refused", str((st, res)))
+        st, res = hub.http_post("/api/plugins/install", {"url": f"{base}/met-1.4.0.tar.gz"})
+        check(st == 200 and res.get("ok") is True, "the next release installs (catalog SHA-256)", str((st, res)))
+        with open(os.path.join(hub.data_dir, "plugins", "met", "manifest.json")) as f:
+            check(json.load(f).get("version") == "1.4.0", "next release installed")
+        hub.http_post("/api/plugins/uninstall", {"id": "met"})
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def main():
     print("[-] Running Plugin Device Save & Architecture Tests...")
 
@@ -362,6 +438,8 @@ def main():
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+        check_min_version_and_next(hub, mock_repo_dir)
 
     if failed:
         print(f"\n[!] {failed} checks FAILED.")

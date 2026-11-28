@@ -166,6 +166,7 @@ The `manifest.json` file defines the plugin identity and how it appears in the W
 | `pairing` | `object` | *(Optional)* Pairing: `supported`, `type` (`pin_display`, the default, `confirm` or `listen`), `requires_host` (default true; false for `listen`), `timeout_s` (default 15, at most 60) and the dialog texts (`title`, `button_label`, `description`, `instructions`, `host_label`, `prompt`, `pin_length`). See [Pairing Protocol](#pairing-protocol). |
 | `device_definition` | `object` | *(Optional)* Schema for devices created using this plugin. `config_fields`, when present, is an array of objects, each with a string `key`. A `default_commands` entry may have `"range": [min, max]`: the integer values the command takes (see `value` below), and an infrared alternative, `irKeyCode` and `irWhen` (see [Infrared alternative of a command](#infrared-alternative-of-a-command-irkeycode-irwhen)). |
 | `requires_libs` | `array` | *(Optional)* File names of the Hub's shared libraries the binary links, e.g. `["libbearssl.so.0"]` (see "Using TLS: the shared BearSSL" below). |
+| `min_harmony_version` | `string` | *(Optional)* The oldest HarmonyNG the plugin runs on, e.g. `"4.0.0"` (a build for the Linux 6.18 system). An older Hub refuses to install or update it, and the marketplace shows "Needs HarmonyNG ..." instead of the install button (the entry gets `compatible: false`). Digits and dots only: any other value (`4`, `"four"`) is refused. Put it in the repository entry too, so the marketplace shows it before a download (the Hub decides on the manifest of the downloaded archive). |
 
 The Hub refuses an install whose manifest has no safe `id`, no `version`, no valid `entrypoint` (or one not in the archive), a malformed `config_fields`, a `default_commands` range that is not two integers with min <= max, a `default_commands` `irKeyCode` that is not a non-empty string or `irWhen` that is not a config key (letters, digits, `_` or `-`, at most 63), or a `requires_libs` entry that is not in `/data/harmony/lib` (a Hub on older firmware: update it first).
 
@@ -483,6 +484,31 @@ To distribute your plugin independently, host a `repository.json` index on GitHu
 ```
 
 Users can simply paste your repository URL into the **Repositories** tab in their WebUI or Android App to install your plugin.
+
+**Releases for a newer HarmonyNG**: the top level of an entry is the release every Hub can run
+(Hubs on 3.0.0 and older read nothing else). A release that raises `min_harmony_version` goes
+into `next`, a release block or a list of them:
+
+```json
+"version": "1.2.0",
+"download_url": "https://github.com/username/my-plugin/releases/download/v1.2.0/my-plugin.tar.gz",
+"sha256": "<64 hex characters>",
+"next": [
+  {
+    "version": "1.3.0",
+    "min_harmony_version": "4.0.0",
+    "download_url": "https://github.com/username/my-plugin/releases/download/v1.3.0/my-plugin.tar.gz",
+    "sha256": "<64 hex characters>"
+  }
+]
+```
+
+A Hub takes the newest `next` release whose `min_harmony_version` it meets in place of the entry
+(its `version`, `download_url`, `sha256` and minimum) for the marketplace, installs and pulls by
+id, when it is newer than the top level. Any other Hub keeps the top level. `gen_repository.py`
+in `harmony-ng-plugins` keeps the last release without the new minimum at the top level and
+writes the newer ones into `next`. Both UIs offer an update only for a newer release, never for
+an older one than the installed plugin.
 
 ---
 
