@@ -274,12 +274,18 @@ pick_official_branch
         beta_reqs = [u for u in self.fetch_log("requests") if u.startswith(BETA + "/")]
         self.assertEqual(beta_reqs, [f"{BETA}/v2/VERSION"] * 2 + [f"{BETA}/VERSION"])
         self.assertEqual(len(self.fetch_log("sleeps")), 1)
-        # a branch that is only compared keeps one try of each file
+        # fetch-remote-ota: the followed branch gets the second try, the other one is only compared
         self.publish(STABLE, "3.4.0")
         self.assertEqual(self.run_sh("", "fetch-remote-ota", 'echo "$REPO"', real_fetch=True).strip(), STABLE)
         beta_reqs = [u for u in self.fetch_log("requests") if u.startswith(BETA + "/")]
-        self.assertEqual(beta_reqs, [f"{BETA}/v2/VERSION", f"{BETA}/VERSION"])
-        self.assertEqual(self.fetch_log("sleeps"), [])
+        self.assertEqual(beta_reqs, [f"{BETA}/v2/VERSION"] * 2 + [f"{BETA}/VERSION"])
+        self.assertEqual(len(self.fetch_log("sleeps")), 1)
+        stable_reqs = [u for u in self.fetch_log("requests") if u.startswith(STABLE + "/")]
+        self.assertEqual(stable_reqs, [])  # fetch_log was emptied above; STABLE answered at once
+        # one failed read of the followed branch, both holding the own version: it stays there
+        self.publish(BETA, "3.4.0")
+        (self.root / "fail_once").write_text(f"{BETA}/v2/VERSION\n")
+        self.assertEqual(self.run_sh("", "fetch-remote-ota", 'echo "$REPO"', real_fetch=True).strip(), BETA)
 
     def test_stable_channel_never_sees_beta(self):
         self.publish(STABLE, "3.4.0")

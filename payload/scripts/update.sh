@@ -436,9 +436,9 @@ pick_official_branch() {
       _own=$(get_local_version)
       _other="$OTA_STABLE"
       [ "$REPO" = "$OTA_STABLE" ] && _other="$OTA_BETA"
-      # one try each: a failed read only moves to the other branch when that one holds the own
-      # version too, where the files are the same
-      if [ "$(source_version "$REPO" quick)" != "${_own#v}" ] && [ "$(source_version "$_other" quick)" = "${_own#v}" ]; then
+      # the branch the Hub follows gets the second try, as in check and apply: one failed read
+      # must not move it to the other branch; that one is only compared (one try each)
+      if [ "$(source_version "$REPO" follow)" != "${_own#v}" ] && [ "$(source_version "$_other" quick)" = "${_own#v}" ]; then
         REPO="$_other"
       fi
       ;;
