@@ -392,9 +392,14 @@ jobs:
           FLAGS=""
           [ "${{ github.event.inputs.prerelease }}" = "true" ] && FLAGS="$FLAGS --prerelease"
           [ "${{ github.event.inputs.draft }}" = "true" ] && FLAGS="$FLAGS --draft"
-          gh release create "v${VERSION}" release_assets/* $FLAGS \
-            --title "HarmonyNG v${VERSION}" \
-            --notes-file release_notes.md
+          # a re-run after a failed OTA push finds the release there already
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} exists: kept."
+          else
+            gh release create "v${VERSION}" release_assets/* $FLAGS \
+              --title "HarmonyNG v${VERSION}" \
+              --notes-file release_notes.md
+          fi
 
       # A pre-release or a draft goes to the beta channel (branch ota-beta) only. Its signed OTA
       # staging is a release asset: publishing it later as a full release puts that same staging

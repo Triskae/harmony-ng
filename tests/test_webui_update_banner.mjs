@@ -119,4 +119,41 @@ await check.check('a mirror installs instead of opening the release page', async
   assert.deepEqual(opened, [], 'no release page for a mirror');
 });
 
+await check.check('the next major version: banner once per version, dismissable, no beta select on v3', async () => {
+  for (const n of [...body.walk()]) if (n.id && n.parentNode) n.parentNode.removeChild(n);
+  for (const id of ['hubUpdateBanner', 'hubUpdateTitle', 'hubUpdateDesc', 'btnHubUpdateBanner', 'btnHubUpdateDismiss',
+    'updateChannelRow']) {
+    const el = document.createElement(id.startsWith('btn') ? 'button' : 'div');
+    el.id = id;
+    el.style.display = 'none';
+    body.appendChild(el);
+  }
+  const own = Object.create(HarmonyAppHubsNetwork.prototype);
+  own.onlineVersion = '3.5.0';
+  own.onlineNextMajor = '';
+  own.isUpdating = false;
+  own.pollTimerActive = false;
+  own.updateChannel = 'stable';
+  own.client = {
+    getUpdateStatus: async () => ({ current_version: '3.5.0', next_major_version: '4.0.0', channel: 'stable' }),
+    getRfStatus: async () => null,
+  };
+  const app = new Proxy(own, { get: (t, k) => (k in t ? t[k] : () => {}) });
+  try { localStorage.removeItem('hng_next_major_dismissed'); } catch (_) { }
+  await own.checkBanners.call(app);
+  const banner = document.getElementById('hubUpdateBanner');
+  assert.equal(banner.style.display, 'flex', 'v4 shown on an up-to-date v3 Hub');
+  assert.equal(own.bannerReleaseUrl, 'https://github.com/iranl/harmony-ng/releases/tag/v4.0.0');
+  assert.equal(document.getElementById('btnHubUpdateDismiss').style.display, '', 'dismiss offered');
+  assert.equal(document.getElementById('updateChannelRow').style.display, 'none', 'no beta select on v3');
+  own.bindIrAndSettingsEvents.call(app);
+  await document.getElementById('btnHubUpdateDismiss').fire('click');
+  assert.equal(banner.style.display, 'none', 'dismissed');
+  await own.checkBanners.call(app);
+  assert.equal(banner.style.display, 'none', 'stays dismissed for 4.0.0');
+  own.client.getUpdateStatus = async () => ({ current_version: '3.5.0', next_major_version: '4.1.0' });
+  await own.checkBanners.call(app);
+  assert.equal(banner.style.display, 'flex', 'a newer next major version shows again');
+});
+
 check.finish();

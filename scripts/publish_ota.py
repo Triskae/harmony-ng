@@ -364,14 +364,23 @@ def version_tuple(v: str) -> tuple:
 
 
 def branch_version(remote_url: str, branch: str) -> str:
-    """The release on the remote's branch (v2/VERSION), "" when the branch or the file is missing"""
+    """The release on the remote's branch (v2/VERSION, else VERSION), "" when the branch does not
+    exist. Any other failure (remote not reachable, no version file) stops: "" means "nothing
+    there to protect", so it must never stand for an error."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
-        if subprocess.run(["git", "fetch", "-q", "--depth", "1", remote_url, branch], cwd=tmp).returncode != 0:
+        ls = subprocess.run(["git", "ls-remote", "--heads", remote_url, branch], cwd=tmp, capture_output=True, text=True)
+        if ls.returncode != 0:
+            raise SystemExit(f"[-] Cannot read {branch} of the remote: {ls.stderr.strip()}")
+        if not ls.stdout.strip():
             return ""
-        res = subprocess.run(["git", "show", "FETCH_HEAD:v2/VERSION"], cwd=tmp, capture_output=True, text=True)
-        return res.stdout.strip() if res.returncode == 0 else ""
+        subprocess.run(["git", "fetch", "-q", "--depth", "1", remote_url, branch], cwd=tmp, check=True)
+        for name in ("v2/VERSION", "VERSION"):
+            res = subprocess.run(["git", "show", f"FETCH_HEAD:{name}"], cwd=tmp, capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip()
+    raise SystemExit(f"[-] {branch} has no VERSION file: not promoted.")
 
 
 def sign_manifest(output_dir: Path, require: bool) -> bool:
@@ -455,6 +464,9 @@ def main():
         ver = promote_staging(args.promote, STAGING_DIR)
         # an older draft or pre-release published later must not replace a newer stable release
         current = branch_version(args.remote, args.branch) if args.remote else ""
+        if current and version_tuple(ver)[:1] != version_tuple(current)[:1]:
+            # another major version has a branch of its own (v4: ota4)
+            raise SystemExit(f"[-] {args.branch} holds v{current}: v{ver} is another major version, not promoted.")
         if current and version_tuple(ver) <= version_tuple(current):
             print(f"[*] {args.branch} holds v{current}: v{ver} is not newer, not promoted.")
             return

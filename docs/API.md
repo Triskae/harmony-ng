@@ -611,7 +611,7 @@ Chooses the releases the update check and the online update follow (admin):
 `{"channel": "stable"}` (the default: full releases, branch `ota`) or `{"channel": "beta"}` (the
 newer of branch `ota-beta`, the pre-releases and drafts, which are tested less, and branch `ota`).
 A pre-release of another major version on `ota-beta` is never followed (v3 has no beta; the
-v4 betas are there, and v4 itself is announced through `VERSION_V4`). The channel applies to the
+v4 betas are there, and v4 itself is announced through `VERSION_V4`); the legacy web UI shows the channel select from v4 on. The channel applies to the
 default source only: a custom source is followed as it is. A change
 clears the stored latest version. Answers `{"ok": true, "channel": "beta"}`, or `400` for another
 value. A pre-release or draft published later as a full release goes to the stable channel

@@ -367,6 +367,12 @@ export class HarmonyAppEventsActions extends HarmonyAppEventsNav {
       if (this.bannerReleaseUrl) window.open(this.bannerReleaseUrl, '_blank', 'noopener');
       else this.installSoftwareUpdate();
     });
+    // the next major version's banner (v4 on a v3 Hub), dismissed for that version
+    document.getElementById('btnHubUpdateDismiss')?.addEventListener('click', () => {
+      try { localStorage.setItem('hng_next_major_dismissed', this.bannerNextMajor || ''); } catch (_) { }
+      const banner = document.getElementById('hubUpdateBanner');
+      if (banner) banner.style.display = 'none';
+    });
     document.getElementById('btnPushConfigToRemote')?.addEventListener('click', () => this.pushConfigToRemote());
     document.getElementById('rfCopySlotMappingBtn')?.addEventListener('click', () => this.copySlotMappings());
 

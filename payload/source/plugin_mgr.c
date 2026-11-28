@@ -1216,33 +1216,48 @@ int plugin_mgr_version_ok(const cJSON *entry, char *err_msg, size_t err_msg_sz) 
     return -1;
 }
 
-/* A repository entry whose release needs a newer HarmonyNG than this one may name the last
- * release that runs here: "legacy": {"version", "download_url", "sha256"[, "min_harmony_version"]}
- * (scripts/gen_repository.py of the plugin repository writes it when the minimum rises). That
- * release then stands in for the entry everywhere (marketplace, install and pull by id), with
- * "latest_version" naming the release this Hub cannot run. */
-static void apply_legacy_release(cJSON *e) {
-    const cJSON *lg = cJSON_GetObjectItemCaseSensitive(e, "legacy");
-    if (lg && plugin_mgr_version_ok(e, NULL, 0) != 0 && cJSON_IsObject(lg) &&
-        plugin_mgr_version_ok(lg, NULL, 0) == 0) {
-        const cJSON *v = cJSON_GetObjectItemCaseSensitive(lg, "version");
-        const cJSON *u = cJSON_GetObjectItemCaseSensitive(lg, "download_url");
-        const cJSON *h = cJSON_GetObjectItemCaseSensitive(lg, "sha256");
-        const cJSON *m = cJSON_GetObjectItemCaseSensitive(lg, "min_harmony_version");
-        const cJSON *cur = cJSON_GetObjectItemCaseSensitive(e, "version");
-        if (cJSON_IsString(v) && cJSON_IsString(u) && is_safe_url(u->valuestring) && cJSON_IsString(h) &&
-            strlen(h->valuestring) == 64) {
-            if (cJSON_IsString(cur)) cJSON_AddStringToObject(e, "latest_version", cur->valuestring);
-            cJSON_ReplaceItemInObjectCaseSensitive(e, "version", cJSON_CreateString(v->valuestring));
-            cJSON_DeleteItemFromObjectCaseSensitive(e, "download_url");
-            cJSON_AddStringToObject(e, "download_url", u->valuestring);
-            cJSON_DeleteItemFromObjectCaseSensitive(e, "sha256");
-            cJSON_AddStringToObject(e, "sha256", h->valuestring);
-            cJSON_DeleteItemFromObjectCaseSensitive(e, "min_harmony_version");
-            if (cJSON_IsString(m)) cJSON_AddStringToObject(e, "min_harmony_version", m->valuestring);
+/* A release block of a repository entry: {"version", "download_url", "sha256"[, "min_harmony_version"]} */
+static int release_block_ok(const cJSON *r) {
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(r, "version");
+    const cJSON *u = cJSON_GetObjectItemCaseSensitive(r, "download_url");
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(r, "sha256");
+    return cJSON_IsObject(r) && cJSON_IsString(v) && cJSON_IsString(u) && is_safe_url(u->valuestring) &&
+           cJSON_IsString(h) && strlen(h->valuestring) == 64 && plugin_mgr_version_ok(r, NULL, 0) == 0;
+}
+
+/* The top level of a repository entry is the release every Hub can run: Hubs that do not know
+ * "next" (3.0.0 and older) read only that. "next" (one release block or a list of them,
+ * scripts/gen_repository.py of the plugin repository writes it when a release raises
+ * min_harmony_version) holds the releases that need a newer HarmonyNG. The newest one this Hub
+ * meets stands in for the entry everywhere (marketplace, install and pull by id) when it is newer
+ * than the top level, or when the top level itself is not for this Hub. */
+static void apply_next_release(cJSON *e) {
+    const cJSON *nx = cJSON_GetObjectItemCaseSensitive(e, "next");
+    const cJSON *best = NULL;
+    if (cJSON_IsObject(nx)) {
+        if (release_block_ok(nx)) best = nx;
+    } else if (cJSON_IsArray(nx)) {
+        const cJSON *r = NULL;
+        cJSON_ArrayForEach(r, nx) {
+            if (release_block_ok(r) && (!best || harmony_version_compare(
+                    cJSON_GetObjectItemCaseSensitive(r, "version")->valuestring,
+                    cJSON_GetObjectItemCaseSensitive(best, "version")->valuestring) > 0))
+                best = r;
         }
     }
-    cJSON_DeleteItemFromObjectCaseSensitive(e, "legacy");
+    const cJSON *cur = cJSON_GetObjectItemCaseSensitive(e, "version");
+    if (best && (plugin_mgr_version_ok(e, NULL, 0) != 0 || !cJSON_IsString(cur) ||
+                 harmony_version_compare(cJSON_GetObjectItemCaseSensitive(best, "version")->valuestring,
+                                         cur->valuestring) > 0)) {
+        const char *keys[] = {"version", "download_url", "sha256", "min_harmony_version"};
+        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+            const cJSON *src = cJSON_GetObjectItemCaseSensitive(best, keys[i]);
+            cJSON *copy = cJSON_IsString(src) ? cJSON_CreateString(src->valuestring) : NULL;
+            cJSON_DeleteItemFromObjectCaseSensitive(e, keys[i]);
+            if (copy) cJSON_AddItemToObject(e, keys[i], copy);
+        }
+    }
+    cJSON_DeleteItemFromObjectCaseSensitive(e, "next");
 }
 
 /* What the Hub needs from a manifest before it installs it */
@@ -1936,7 +1951,7 @@ cJSON *plugin_mgr_get_marketplace_catalog(int force_reload) {
                             /* the repository it was read from, never one the entry names */
                             cJSON_DeleteItemFromObjectCaseSensitive(e, "repository");
                             cJSON_AddStringToObject(e, "repository", repo_url->valuestring);
-                            apply_legacy_release(e);
+                            apply_next_release(e);
                             cJSON_AddItemToArray(catalog, e);
                         }
                     }

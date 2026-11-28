@@ -397,11 +397,14 @@ is_version_newer() {
   }'
 }
 
-# source_version URL: the release the source's VERSION file names, "" when it cannot be read
-# (v2 checks v2/VERSION first)
+# source_version URL [quick]: the release the source's VERSION file names, "" when it cannot be
+# read (v2 checks v2/VERSION first). quick: v2/VERSION once (an official branch that is only
+# compared: a missing branch must not cost the retries and their waits)
 source_version() {
   _sv=""
-  if download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
+  if [ "$2" = quick ]; then
+    download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 1 && _sv=$(cat /tmp/ota_ver.$$ | tr -d '\r\n v')
+  elif download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
      download_retry "$1/VERSION_V2?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
      download_retry "$1/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 3; then
     _sv=$(cat /tmp/ota_ver.$$ | tr -d '\r\n v')
@@ -413,6 +416,9 @@ source_version() {
 # The two official branches. A Hub on beta follows whichever holds the newer release: ota-beta
 # may not exist yet, and a full release goes to ota only. fetch-remote-ota and repair-tls want
 # the files of the Hub's own version, which after a channel switch can be on the other branch.
+# PICKED_VER: the version read for the branch kept (do_check does not read it again).
+PICKED_REPO=""
+PICKED_VER=""
 pick_official_branch() {
   [ "$REPO" = "$OTA_STABLE" ] || [ "$REPO" = "$OTA_BETA" ] || return 0
   case "$CMD" in
@@ -420,7 +426,7 @@ pick_official_branch() {
       _own=$(get_local_version)
       _other="$OTA_STABLE"
       [ "$REPO" = "$OTA_STABLE" ] && _other="$OTA_BETA"
-      if [ "$(source_version "$REPO")" != "${_own#v}" ] && [ "$(source_version "$_other")" = "${_own#v}" ]; then
+      if [ "$(source_version "$REPO" quick)" != "${_own#v}" ] && [ "$(source_version "$_other" quick)" = "${_own#v}" ]; then
         REPO="$_other"
       fi
       ;;
@@ -428,13 +434,17 @@ pick_official_branch() {
       [ "$REPO" = "$OTA_BETA" ] || return 0
       # ota-beta carries the pre-releases of the next major version (v4) only: those are never
       # followed (v3 has no beta; v4 is announced through VERSION_V4)
-      _bv=$(source_version "$OTA_BETA")
+      _bv=$(source_version "$OTA_BETA" quick)
       _stv=$(source_version "$OTA_STABLE")
       _own=$(get_local_version)
       if [ -z "$_bv" ] || [ "$(echo "$_bv" | cut -d. -f1)" != "$(echo "${_own#v}" | cut -d. -f1)" ] || \
          { [ -n "$_stv" ] && is_version_newer "$_stv" "$_bv"; }; then
         REPO="$OTA_STABLE"
+        PICKED_VER="$_stv"
+      else
+        PICKED_VER="$_bv"
       fi
+      PICKED_REPO="$REPO"
       ;;
   esac
 }
@@ -442,8 +452,10 @@ pick_official_branch() {
 do_check() {
   LOCAL_VER=$(get_local_version)
 
-  # 1. Try raw GitHub OTA VERSION file with retries
-  REMOTE_VER=$(source_version "$REPO")
+  # 1. Try raw GitHub OTA VERSION file with retries (read already when the branch was picked)
+  REMOTE_VER=""
+  [ "$REPO" = "$PICKED_REPO" ] && REMOTE_VER="$PICKED_VER"
+  [ -n "$REMOTE_VER" ] || REMOTE_VER=$(source_version "$REPO")
 
   # 2. Fallback: try GitHub releases API
   if [ -z "$REMOTE_VER" ]; then

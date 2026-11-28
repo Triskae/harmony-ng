@@ -230,12 +230,22 @@ class PublishOta(unittest.TestCase):
             src = t / "src"
             (src / "v2").mkdir(parents=True)
             (src / "v2" / "VERSION").write_text("3.9.1\n")
-            git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+            git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
             subprocess.run(["git", "init", "-q", "-b", "ota", str(src)], check=True)
             subprocess.run(git + ["-C", str(src), "add", "."], check=True)
             subprocess.run(git + ["-C", str(src), "commit", "-qm", "v"], check=True)
             self.assertEqual(publish_ota.branch_version(str(src), "ota"), "3.9.1")
             self.assertEqual(publish_ota.branch_version(str(src), "ota-beta"), "")
+            # an unreachable remote stops instead of reading as "nothing there"
+            with self.assertRaises(SystemExit):
+                publish_ota.branch_version(str(t / "missing"), "ota")
+            # a branch with a plain VERSION (the v4 layout)
+            subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "ota4"], check=True)
+            subprocess.run(git + ["-C", str(src), "rm", "-q", "-r", "v2"], check=True)
+            (src / "VERSION").write_text("4.0.0\n")
+            subprocess.run(git + ["-C", str(src), "add", "."], check=True)
+            subprocess.run(git + ["-C", str(src), "commit", "-qm", "v4"], check=True)
+            self.assertEqual(publish_ota.branch_version(str(src), "ota4"), "4.0.0")
             self.assertLessEqual(publish_ota.version_tuple("3.9.0"), publish_ota.version_tuple("3.9.1"))
 
 

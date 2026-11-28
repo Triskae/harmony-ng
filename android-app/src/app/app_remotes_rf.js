@@ -738,6 +738,11 @@ export class HarmonyAppRemotesRf extends HarmonyAppRemotesScreen {
         if (sel && document.activeElement !== sel) sel.value = this.updateChannel;
       }
 
+      // the beta channel starts with v4: v3 Hubs get no select (the Hub ignores v4 betas anyway)
+      const chRow = document.getElementById('updateChannelRow');
+      const curVer = updateStat?.current_version || updateStat?.version || '';
+      if (chRow && curVer) chRow.style.display = parseInt(String(curVer).replace(/^v/, ''), 10) >= 4 || this.updateChannel === 'beta' ? '' : 'none';
+
       // 1. Hub software update available
       const hubBanner = document.getElementById('hubUpdateBanner');
       if (hubBanner) {
@@ -747,9 +752,18 @@ export class HarmonyAppRemotesRf extends HarmonyAppRemotesScreen {
         const isUpdateAvail = Boolean(hasOnlineUpdate || (updateStat?.update_available && (!targetRemote || (localVer && this.isVersionOlder(localVer, targetRemote)))));
         // no update of this major version: the next major one (v4, VERSION_V4), release bundle only
         const nextMajor = this.onlineNextMajor || updateStat?.next_major_version || '';
-        const showNext = !isUpdateAvail && Boolean(nextMajor && localVer && this.isVersionOlder(localVer, nextMajor));
+        const majorOf = (v) => String(v).replace(/^v/, '').split('.')[0];
+        const showNext = !isUpdateAvail && Boolean(nextMajor && localVer && majorOf(nextMajor) !== majorOf(localVer)
+          && this.isVersionOlder(localVer, nextMajor));
+        // the next major version can be dismissed (per version): a Hub may stay on v3
+        let dismissed = '';
+        try { dismissed = localStorage.getItem('hng_next_major_dismissed') || ''; } catch (_) { }
+        const showNextBanner = showNext && dismissed !== nextMajor;
         const bannerTarget = showNext ? nextMajor : targetRemote;
-        if ((isUpdateAvail || showNext) && !updateStat?.updating) {
+        const dismissBtn = document.getElementById('btnHubUpdateDismiss');
+        if (dismissBtn) dismissBtn.style.display = showNext ? '' : 'none';
+        this.bannerNextMajor = showNext ? nextMajor : '';
+        if ((isUpdateAvail || showNextBanner) && !updateStat?.updating) {
           hubBanner.style.display = 'flex';
           const title = document.getElementById('hubUpdateTitle');
           const desc = document.getElementById('hubUpdateDesc');
@@ -767,7 +781,8 @@ export class HarmonyAppRemotesRf extends HarmonyAppRemotesScreen {
         } else {
           hubBanner.style.display = 'none';
           this.bannerReleaseUrl = '';
-          this.showBundleNotice('', '');
+          // a dismissed next major version stays named on the update card
+          this.showBundleNotice(showNext ? nextMajor : '', showNext ? this.bundleOnlyUrl(localVer, nextMajor, updateStat) : '');
         }
       }
 

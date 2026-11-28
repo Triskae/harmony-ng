@@ -139,6 +139,8 @@
     <div class="update-banner-actions">
       <button type="button" class="btn btn-sm btn-primary" id="btnHubUpdateBanner" style="font-weight: 700;"
         data-i18n="update_hub_btn">Update Hub</button>
+      <button type="button" class="btn btn-sm btn-secondary" id="btnHubUpdateDismiss" style="display: none;"
+        data-i18n="close">Close</button>
     </div>
   </div>
 
@@ -4560,7 +4562,8 @@ harmony_send_command:
                 data-i18n-placeholder="placeholder_optional_token">
             </div>
           </div>
-          <div class="row" style="margin-top: 8px;">
+          <!-- shown from v4 on (checkBanners): v3 has no beta -->
+          <div id="updateChannelRow" class="row" style="margin-top: 8px; display: none;">
             <div>
               <label for="updateChannel" data-i18n="update_channel">Update channel</label>
               <select id="updateChannel" class="form-control">

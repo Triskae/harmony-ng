@@ -122,7 +122,8 @@ export class HarmonyAppHubsNetwork extends HarmonyAppAuthUsers {
         const hasUpdate = Boolean(targetVer && curVer && this.isVersionOlder(curVer, targetVer));
         // up to date: the next major version (v4, VERSION_V4 on the v3 branch), release bundle only
         const nextMajor = String(stat.next_major_version || res.next_major_version || this.onlineNextMajor || '').replace(/^v/, '');
-        const showNext = !hasUpdate && Boolean(nextMajor && curVer && this.isVersionOlder(curVer, nextMajor));
+        const showNext = !hasUpdate && Boolean(nextMajor && curVer && nextMajor.split('.')[0] !== String(curVer).replace(/^v/, '').split('.')[0]
+          && this.isVersionOlder(curVer, nextMajor));
         const noticeVer = showNext ? nextMajor : targetVer;
         const bundleUrl = hasUpdate || showNext ? this.bundleOnlyUrl(curVer, noticeVer, { ...res, ...stat }) : '';
         this.showBundleNotice(noticeVer, bundleUrl);

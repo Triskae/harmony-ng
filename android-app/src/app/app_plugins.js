@@ -376,8 +376,10 @@ export class HarmonyAppPlugins extends HarmonyAppHubsNetwork {
 
     container.innerHTML = this.marketplaceCatalog.map(item => {
       const installed = installedMap.get(item.id);
-      const isUpToDate = installed && installed.version === item.version;
-      const isUpdateAvailable = installed && installed.version !== item.version;
+      // only a newer catalog release is an update (a Hub may hold a newer one than the catalog
+      // offers it, e.g. a release for a newer HarmonyNG installed before its minimum was known)
+      const isUpdateAvailable = Boolean(installed && item.version && this.isVersionOlder(installed.version || '0', item.version));
+      const isUpToDate = installed && !isUpdateAvailable;
 
       return `
         <div class="card" style="margin-bottom: 12px; padding: 14px;">
