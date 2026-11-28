@@ -30,3 +30,4 @@ drivers/windows/** -text
 # BearSSL tree must stay identical to its upstream commit (tests/test_build_downloads.sh checks
 # its git tree hash), so no line ending rule above applies to it.
 build/vendor/bearssl/** -text
+build/vendor/*.tar.bz2 binary

@@ -6,6 +6,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TMP_DIR="$SCRIPT_DIR/tmp"
 BB_VER="1.36.1"
 BB_TAR="busybox-${BB_VER}.tar.bz2"
+# The release tarball is kept in the repository (build/vendor/README.md): no download.
+# BUSYBOX_FETCH=1 downloads it from BB_URL into build/tmp instead (to check or update the copy).
+BB_VENDOR="$SCRIPT_DIR/vendor/${BB_TAR}"
 BB_URL="https://busybox.net/downloads/${BB_TAR}"
 # Published by busybox.net next to the tarball (${BB_URL}.sha256)
 BB_SHA256="b8cc24c9574d809e7279c3be349795c5d5ceb6fdf19ca709f80cde50e47de314"
@@ -18,22 +21,35 @@ bb_tar_ok() {
     echo "$BB_SHA256  $1" | sha256sum -c - >/dev/null 2>&1
 }
 
-# Ensure archive downloaded and intact. A cached copy that does not match (an HTTP error page
-# saved under the tarball's name, a cut download) is fetched again; a download that does not
-# match stops the build. The file gets its name only after the check.
-if [ -f "$TMP_DIR/$BB_TAR" ] && ! bb_tar_ok "$TMP_DIR/$BB_TAR"; then
-    echo "[!] Cached $BB_TAR does not match its SHA-256; downloading it again."
-    rm -f "$TMP_DIR/$BB_TAR"
-fi
-if [ ! -f "$TMP_DIR/$BB_TAR" ]; then
-    echo "[-] Downloading BusyBox ${BB_VER}..."
-    curl -fsSL -o "$TMP_DIR/$BB_TAR.part" "$BB_URL"
-    if ! bb_tar_ok "$TMP_DIR/$BB_TAR.part"; then
-        rm -f "$TMP_DIR/$BB_TAR.part"
-        echo "[!] $BB_URL does not match SHA-256 $BB_SHA256" >&2
+if [ "${BUSYBOX_FETCH:-0}" = "1" ]; then
+    # Ensure archive downloaded and intact. A cached copy that does not match (an HTTP error page
+    # saved under the tarball's name, a cut download) is fetched again; a download that does not
+    # match stops the build. The file gets its name only after the check.
+    BB_SRC="$TMP_DIR/$BB_TAR"
+    if [ -f "$BB_SRC" ] && ! bb_tar_ok "$BB_SRC"; then
+        echo "[!] Cached $BB_TAR does not match its SHA-256; downloading it again."
+        rm -f "$BB_SRC"
+    fi
+    if [ ! -f "$BB_SRC" ]; then
+        echo "[-] Downloading BusyBox ${BB_VER} (BUSYBOX_FETCH=1)..."
+        curl -fsSL -o "$BB_SRC.part" "$BB_URL"
+        if ! bb_tar_ok "$BB_SRC.part"; then
+            rm -f "$BB_SRC.part"
+            echo "[!] $BB_URL does not match SHA-256 $BB_SHA256" >&2
+            exit 1
+        fi
+        mv -f "$BB_SRC.part" "$BB_SRC"
+    fi
+else
+    BB_SRC="$BB_VENDOR"
+    if [ ! -f "$BB_SRC" ]; then
+        echo "[!] $BB_SRC is missing (build/vendor/README.md); BUSYBOX_FETCH=1 downloads it instead" >&2
         exit 1
     fi
-    mv -f "$TMP_DIR/$BB_TAR.part" "$TMP_DIR/$BB_TAR"
+    if ! bb_tar_ok "$BB_SRC"; then
+        echo "[!] $BB_SRC does not match SHA-256 $BB_SHA256" >&2
+        exit 1
+    fi
 fi
 
 build_mips() {
@@ -41,7 +57,7 @@ build_mips() {
     MIPS_BUILD="$TMP_DIR/busybox-${BB_VER}-mips"
     rm -rf "$MIPS_BUILD"
     mkdir -p "$MIPS_BUILD"
-    tar -xjf "$TMP_DIR/$BB_TAR" -C "$MIPS_BUILD" --strip-components=1
+    tar -xjf "$BB_SRC" -C "$MIPS_BUILD" --strip-components=1
 
     cd "$MIPS_BUILD"
     for t in "$REPO_ROOT/build/toolchains"/mips32--uclibc--stable*; do
@@ -107,7 +123,7 @@ build_arm() {
     ARM_BUILD="$TMP_DIR/busybox-${BB_VER}-arm"
     rm -rf "$ARM_BUILD"
     mkdir -p "$ARM_BUILD"
-    tar -xjf "$TMP_DIR/$BB_TAR" -C "$ARM_BUILD" --strip-components=1
+    tar -xjf "$BB_SRC" -C "$ARM_BUILD" --strip-components=1
 
     cd "$ARM_BUILD"
     for t in "$REPO_ROOT/build/toolchains"/armv5-eabi--uclibc--stable*; do
