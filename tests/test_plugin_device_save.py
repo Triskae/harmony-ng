@@ -79,6 +79,15 @@ def check_min_version_and_next(hub, repo_dir):
          "download_url": f"{base}/nx-1.3.0.tar.gz", "sha256": v4_sha},
         {"id": "bad", "name": "bad", "version": "1.0.0", "min_harmony_version": 4,
          "download_url": f"{base}/bad-1.0.0.tar.gz", "sha256": bad_sha},
+        # three blocks this Hub meets, the newest in the middle: the newest one, not the first or last
+        {"id": "newest", "name": "newest", "version": "1.2.0", "download_url": f"{base}/nx-1.2.0.tar.gz", "sha256": v3_sha,
+         "next": [dict(met, version="1.3.0"), dict(met, version="1.5.0"), dict(met, version="1.4.0")]},
+        # a top level this Hub runs that is newer than the block: the top level stays
+        {"id": "older", "name": "older", "version": "1.6.0", "download_url": f"{base}/nx-1.2.0.tar.gz", "sha256": v3_sha,
+         "next": [met]},
+        # a top level this Hub cannot run: a block it meets stands in, even an older one
+        {"id": "fallback", "name": "fallback", "version": "1.3.0", "min_harmony_version": "99.0.0",
+         "download_url": f"{base}/nx-1.3.0.tar.gz", "sha256": v4_sha, "next": dict(met, version="1.2.5")},
     ]}
     with open(os.path.join(repo_dir, "repository.json"), "w") as f:
         json.dump(repo, f)
@@ -102,6 +111,14 @@ def check_min_version_and_next(hub, repo_dir):
         check(cat.get("only4", {}).get("compatible") is False, "only a release this Hub cannot run: incompatible",
               str(cat.get("only4")))
         check(cat.get("bad", {}).get("compatible") is False, "a minimum that is not a version: incompatible", str(cat.get("bad")))
+        check(cat.get("newest", {}).get("version") == "1.5.0", "of several next releases the newest one stands in",
+              str(cat.get("newest")))
+        o = cat.get("older", {})
+        check(o.get("version") == "1.6.0" and o.get("compatible") is True and "min_harmony_version" not in o,
+              "a next release older than a top level this Hub runs is left out", str(o))
+        fb = cat.get("fallback", {})
+        check(fb.get("version") == "1.2.5" and fb.get("compatible") is True and fb.get("sha256") == met_sha,
+              "a top level this Hub cannot run: an older next release stands in", str(fb))
         st, res = hub.http_post("/api/plugins/install", {"url": f"{base}/nx-1.3.0.tar.gz", "sha256": v4_sha})
         check(st != 200 and "99.0.0" in str(res.get("error", "")), "the release needing 99.0.0 is refused", str((st, res)))
         st, res = hub.http_post("/api/plugins/install", {"url": f"{base}/bad-1.0.0.tar.gz", "sha256": bad_sha})

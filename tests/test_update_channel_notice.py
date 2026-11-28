@@ -390,6 +390,52 @@ class PublishOta(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(old)
 
+    def test_promote_refuses_another_major_version(self):
+        # --promote (release-promote.yml): a v4 staging never lands on the v3 branch, a newer 3.x does
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            t = pathlib.Path(tmp)
+            (t / "gitconfig").write_text("[user]\n\tname = t\n\temail = t@t\n")
+            env = {"GIT_CONFIG_GLOBAL": str(t / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
+            bare = t / "remote.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, env={**os.environ, **env})
+
+            def tarball(version: str, v4_layout: bool) -> pathlib.Path:
+                d = t / f"st-{version}"
+                d.mkdir()
+                (d / "manifest.json").write_text(json.dumps({"version": version, "files": {}}))
+                (d / "manifest.json.sig").write_text("ab" * 64 + "\n")
+                if v4_layout:
+                    (d / "VERSION").write_text(version + "\n")
+                else:
+                    (d / "v2").mkdir()
+                    (d / "v2" / "VERSION").write_text(version + "\n")
+                tb = t / f"ota-staging-v{version}.tar.gz"
+                with tarfile.open(tb, "w:gz") as tar:
+                    for item in d.iterdir():
+                        tar.add(item, arcname=item.name)
+                return tb
+
+            def promote(tb: pathlib.Path):
+                argv = ["publish_ota.py", "--promote", str(tb), "--push", "--remote", str(bare), "--branch", "ota"]
+                with mock.patch.object(publish_ota, "STAGING_DIR", t / "staging"), mock.patch.object(sys, "argv", argv):
+                    publish_ota.main()
+
+            old = dict(os.environ)
+            os.environ.update(env)
+            try:
+                promote(tarball("3.9.0", False))
+                self.assertEqual(publish_ota.branch_version(str(bare), "ota"), "3.9.0")
+                with self.assertRaises(SystemExit) as cm:
+                    promote(tarball("4.1.0", True))
+                self.assertIn("another major version", str(cm.exception))
+                self.assertEqual(publish_ota.branch_version(str(bare), "ota"), "3.9.0", "the v3 branch is unchanged")
+                promote(tarball("3.9.5", False))
+                self.assertEqual(publish_ota.branch_version(str(bare), "ota"), "3.9.5")
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
+
     def test_release_rerun_replaces_the_assets(self):
         # a re-run keeps the release; sha256sums.txt of the new run must not list the old archives
         text = (REPO_DIR / ".github" / "workflows" / "release.yml").read_text()

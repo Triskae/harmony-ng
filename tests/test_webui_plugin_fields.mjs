@@ -4,11 +4,14 @@
 //   "on" or "")
 // - a command made from the manifest's default_commands keeps irKeyCode and irWhen (the legacy
 //   UI kept name, keyCode, raw and range only)
+// - the marketplace offers an update only for a newer catalog release, never for an older one
+//   than the installed plugin (both UIs)
 // Runs in Node with a stand-in DOM: no browser, no Hub.
 import assert from 'node:assert/strict';
-import { installFakeDom, makeChecker } from './webui_fake_dom.mjs';
+import { installFakeDom, makeChecker, tick, allowJsonImports } from './webui_fake_dom.mjs';
 
-installFakeDom();
+const { body } = installFakeDom();
+await allowJsonImports();
 const legacy = await import('../android-app/src/app/plugin_fields.js');
 const fresh = await import('../frontend/src/views/setup/plugin-fields.js');
 
@@ -92,6 +95,48 @@ await t.check('new UI: a command with an infrared alternative shows an IR badge,
   assert.ok(String(on.getAttribute('title')).includes('0xE0E07D82'), 'the code is in the title');
   assert.equal(fresh.irAltBadge({ name: 'Home', keyCode: 'PLUGIN:samsung-tv:Home' }, { hdmi_via_ir: true }), null);
   assert.equal(fresh.irAltBadge({ name: 'X', irKeyCode: IR }, { hdmi_via_ir: true }), null, 'no irWhen: no badge');
+});
+
+// installed version, catalog version: whether the marketplace offers an update
+const UPDATE_CASES = [['1.3.0', '1.2.0', false], ['1.2.0', '1.2.0', false], ['1.2.0', '1.3.0', true], ['1.10.0', '1.9.0', false]];
+const catalogEntry = (version) => ({ id: 'ps5-wake', name: 'PS5', version, download_url: 'https://example.org/a.tar.gz',
+  sha256: 'a'.repeat(64), compatible: true });
+
+await t.check('legacy UI: the marketplace offers only a newer release as an update', async () => {
+  const { HarmonyAppPlugins } = await import('../android-app/src/app/app_plugins.js');
+  const el = document.createElement('div');
+  el.id = 'marketplaceCatalogList';
+  body.appendChild(el);
+  const own = Object.create(HarmonyAppPlugins.prototype);
+  const app = new Proxy(own, { get: (o, k) => (k in o ? o[k] : () => {}) });
+  try {
+    for (const [inst, cat, update] of UPDATE_CASES) {
+      own.installedPlugins = [{ id: 'ps5-wake', version: inst }];
+      own.marketplaceCatalog = [catalogEntry(cat)];
+      try { own.renderMarketplaceCatalog.call(app); } catch (_) { /* button binding on the stand-in DOM */ }
+      assert.equal(/btn-update-plugin|Update to v/.test(el.innerHTML), update, `installed ${inst}, catalog ${cat}`);
+    }
+  } finally {
+    el.remove();
+  }
+});
+
+await t.check('new UI: the marketplace offers only a newer release as an update', async () => {
+  const { api } = await import('../frontend/src/api/index.js');
+  const { createView } = await import('../frontend/src/views/setup/plugins.js');
+  for (const [inst, cat, update] of UPDATE_CASES) {
+    api.getPlugins = async () => ({ plugins: [{ id: 'ps5-wake', version: inst }] });
+    api.getPluginMarketplace = async () => ({ marketplace: [catalogEntry(cat)] });
+    api.getPluginRepositories = async () => ({ repositories: [] });
+    const view = createView();
+    for (let i = 0; i < 5; i++) await tick();
+    const tab = [...view.walk()].find(n => n.tagName === 'button' && /Marketplace/.test(n.textContent));
+    assert.ok(tab, 'no marketplace tab');
+    await tab.fire('click');
+    for (let i = 0; i < 5; i++) await tick();
+    const btns = [...view.walk()].filter(n => n.tagName === 'button').map(n => n.textContent);
+    assert.equal(btns.some(b => /^Update/.test(b)), update, `installed ${inst}, catalog ${cat}: ${btns.join(' | ')}`);
+  }
 });
 
 t.finish();
