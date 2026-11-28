@@ -168,8 +168,11 @@ download_retry() {
       rm -f "$FETCH_ERR" 2>/dev/null
       return 0
     fi
-    sleep 1
     i=$((i + 1))
+    # a wait between attempts only: after the last one it only delays the caller
+    if [ $i -le $max_attempts ]; then
+      sleep 1
+    fi
   done
   rm -f "$FETCH_ERR" 2>/dev/null
   return 1

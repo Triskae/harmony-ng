@@ -60,17 +60,50 @@ class UpdateCheck(unittest.TestCase):
                 "version": v, "ota_installable": installable,
                 "release_url": url or f"https://github.com/iranl/harmony-ng/releases/tag/v{v}"}))
 
-    def run_sh(self, repo_arg: str, cmd: str, tail: str) -> str:
+    def run_sh(self, repo_arg: str, cmd: str, tail: str, real_fetch: bool = False) -> str:
+        """real_fetch: the script's own download_retry (attempts, waits) over a fake wget that logs
+        each request to <root>/requests, fails once for the URL named in <root>/fail_once, and a
+        sleep that logs to <root>/sleeps. Otherwise download_retry serves a file in one call."""
         r = self.root
         text = SCRIPT.read_text()
         head = text[text.index('OTA_STABLE="'):text.index("TIMESTAMP=")]
-        funcs = "".join(function_text(text, n) for n in ("get_local_version", "is_version_newer", "source_version",
-                                                          "pick_official_branch", "do_check"))
+        names = ("get_local_version", "is_version_newer", "source_version", "pick_official_branch", "do_check")
+        if real_fetch:
+            names = ("download_retry",) + names
+        funcs = "".join(function_text(text, n) for n in names)
         body = re.sub(r"(?<![\w/.-])/data/", lambda m: f"{r}{m.group(0)}", head + funcs)
-        serve_cases = "\n".join(f'    {url}/*) src="{path}/${{1#{url}/}}" ;;' for url, path in self.serve.items())
-        harness = f"""
-CMD={cmd}
-REPO_ARG='{repo_arg}'
+        if real_fetch:
+            serve_cases = "\n".join(f'    {url}/*) _s="{path}/${{_u#{url}/}}" ;;' for url, path in self.serve.items())
+            fetch = f"""
+USE_FETCH=0
+WGET=fake_wget
+fake_wget() {{
+  _o=""; _u=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -O) _o="$2"; shift 2 ;;
+      -T|--header) shift 2 ;;
+      -*) shift ;;
+      *) _u="$1"; shift ;;
+    esac
+  done
+  _u="${{_u%%\\?*}}"
+  echo "$_u" >> "{r}/requests"
+  case "$_u" in
+{serve_cases}
+    *) return 1 ;;
+  esac
+  if [ -f "{r}/fail_once" ] && [ "$(cat "{r}/fail_once")" = "$_u" ]; then
+    rm -f "{r}/fail_once"
+    return 1
+  fi
+  [ -f "$_s" ] && cp "$_s" "$_o"
+}}
+sleep() {{ echo "$1" >> "{r}/sleeps"; }}
+"""
+        else:
+            serve_cases = "\n".join(f'    {url}/*) src="{path}/${{1#{url}/}}" ;;' for url, path in self.serve.items())
+            fetch = f"""
 download_retry() {{
   case "$1" in
 {serve_cases}
@@ -79,6 +112,11 @@ download_retry() {{
   src="${{src%%\\?*}}"
   [ -f "$src" ] && cp "$src" "$2"
 }}
+"""
+        harness = f"""
+CMD={cmd}
+REPO_ARG='{repo_arg}'
+{fetch}
 {body}
 pick_official_branch
 {tail}
@@ -92,6 +130,29 @@ pick_official_branch
         line = [ln for ln in stdout.splitlines() if ln.startswith("{")]
         self.assertTrue(line, stdout)
         return json.loads(line[-1])
+
+    def fetch_log(self, name: str) -> list[str]:
+        f = self.root / name
+        lines = f.read_text().splitlines() if f.exists() else []
+        f.unlink(missing_ok=True)
+        return lines
+
+    def test_no_wait_after_the_last_attempt(self):
+        # three attempts that fail: two waits between them, none after the last
+        out = self.run_sh("", "check", f'download_retry "{STABLE}/nothing" "{self.root}/x" 8 3; echo "rc=$?"',
+                          real_fetch=True)
+        self.assertIn("rc=1", out)
+        self.assertEqual((len(self.fetch_log("requests")), len(self.fetch_log("sleeps"))), (3, 2))
+        # one attempt: no wait at all
+        self.run_sh("", "check", f'download_retry "{STABLE}/nothing" "{self.root}/x" 8 1', real_fetch=True)
+        self.assertEqual((len(self.fetch_log("requests")), len(self.fetch_log("sleeps"))), (1, 0))
+        # the second attempt gets the file: one wait
+        self.publish(STABLE, "3.5.0")
+        (self.root / "fail_once").write_text(f"{STABLE}/v2/VERSION\n")
+        out = self.run_sh("", "check", f'download_retry "{STABLE}/v2/VERSION" "{self.root}/x" 8 3; echo "rc=$?"',
+                          real_fetch=True)
+        self.assertIn("rc=0", out)
+        self.assertEqual((len(self.fetch_log("requests")), len(self.fetch_log("sleeps"))), (2, 1))
 
     def test_same_major_installs_online(self):
         self.publish(STABLE, "3.5.0")
