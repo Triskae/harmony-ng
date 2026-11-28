@@ -11,6 +11,9 @@
 static struct { char target[128]; char command[64]; int match; int action; } s_sent[64];
 static int s_count = 0;
 static int s_press_rc = 0;
+/* the release time the press hands to the infrared player, as it is at the send */
+static uint64_t s_until_ms = 0, s_until_at_press = 0;
+void hw_ir_hold_next_press_until(uint64_t release_ms) { s_until_ms = release_ms; }
 
 int hw_device_command_send_action(const char *target, int match_mode, const char *command, int action) {
     if (s_count < 64) {
@@ -20,6 +23,7 @@ int hw_device_command_send_action(const char *target, int match_mode, const char
         s_sent[s_count].action = action;
         s_count++;
     }
+    if (action == HW_BTN_ACTION_PRESS) s_until_at_press = s_until_ms;
     return action == HW_BTN_ACTION_PRESS ? s_press_rc : 0;
 }
 
@@ -52,6 +56,8 @@ int main(void) {
     s_count = 0;
     check(hw_hold_press(&h, "7", 1, "PowerToggle", 1000, 0) == 0, "a press of a held key goes out");
     check(h.active && s_count == 1 && s_sent[0].action == HW_BTN_ACTION_PRESS, "the press comes first");
+    check(s_until_at_press == 1000 && s_until_ms == 0,
+          "the press tells the infrared player when the key is released (1000 ms), for that press only");
     check(hw_hold_next_ms(&h) == HW_HOLD_BEAT_MS, "the first hold is due one beat after the press");
     uint64_t released = run_until_release(&h, 10, 5000);
     check(released == 1000, "the key is released when its hold is up");

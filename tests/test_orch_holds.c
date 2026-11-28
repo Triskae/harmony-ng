@@ -8,15 +8,29 @@
 #include "../payload/source/orchestrator.c"
 
 #include <stdio.h>
+#include <string.h>
 
 /* Stubs for what orchestrator.c calls */
 int g_dry_run = 0;
 const cJSON *config_store_activities_acquire(cfg_snap_t **snap) { *snap = NULL; return NULL; }
 void config_store_release(cfg_snap_t **snap) { *snap = NULL; }
-void hub_events_emit(hub_event_type_t type, cJSON *payload) { (void)type; cJSON_Delete(payload); }
+/* the sending flag of the last state event, -1 before one */
+static int s_ev_sending = -1, s_ev_count = 0;
+void hub_events_emit(hub_event_type_t type, cJSON *payload) {
+    if (type == HUB_EV_ACTIVITY_STATE) {
+        s_ev_count++;
+        s_ev_sending = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(payload, "sending")) ? 1 : 0;
+    }
+    cJSON_Delete(payload);
+}
 int hub_events_subscribe(hub_event_sink_fn fn, void *user) { (void)fn; (void)user; return 0; }
 int hw_device_bt_disconnect(const char *device_id) { (void)device_id; return 0; }
-int hw_device_bt_host(const char *device_id, char *out, size_t outlen) { (void)device_id; (void)out; (void)outlen; return -1; }
+/* devices whose id starts with "bt" are Bluetooth devices */
+int hw_device_bt_host(const char *device_id, char *out, size_t outlen) {
+    if (strncmp(device_id, "bt", 2) != 0) return 0;
+    snprintf(out, outlen, "AA:BB:CC:DD:EE:FF");
+    return 1;
+}
 int hw_device_command_send(const char *device_id, const char *command) { (void)device_id; (void)command; return 0; }
 /* records what the holds send: "<device>/<command> <action>" */
 static char s_sent[64][96];
@@ -27,6 +41,7 @@ int hw_device_command_send_action(const char *target, int match_mode, const char
     return 0;
 }
 int hw_ir_cancel(uint8_t ports) { (void)ports; return 0; }
+void hw_ir_hold_next_press_until(uint64_t release_ms) { (void)release_ms; }
 int hw_ir_send_harmony_keycode(const char *keycode, uint8_t ports, uint8_t repeats) { (void)keycode; (void)ports; (void)repeats; return 0; }
 int hw_ir_send_pronto(const char *pronto_hex, uint8_t ports, uint8_t repeats) { (void)pronto_hex; (void)ports; (void)repeats; return 0; }
 int orch_build_steps(const char *current_id, const char *target_id,
@@ -112,6 +127,43 @@ int main(void) {
     uint64_t t1 = get_now_ms();
     check(hold_service(t1 + HW_HOLD_MAX_MS - 100) == 1, "a long hold is still held just before 10 s");
     check(hold_service(t1 + HW_HOLD_MAX_MS + 50) == 0, "and released at 10 s");
+
+    /* Bluetooth: hub_btstack holds one key for all hosts. A Bluetooth hold releases the other
+     * Bluetooth holds first, and keeps an infrared hold. */
+    hold_release();
+    orch_step_t ir = held_step("7", "VolumeUp", 3000), bt1 = held_step("bt1", "Select", 3000),
+                bt2 = held_step("bt2", "Home", 3000);
+    hold_press(&ir);
+    hold_press(&bt1);
+    s_count = 0;
+    check(hold_press(&bt2) == 0, "a hold on a second Bluetooth device");
+    snprintf(release, sizeof(release), "bt1/Select %d", HW_BTN_ACTION_RELEASE);
+    snprintf(press, sizeof(press), "bt2/Home %d", HW_BTN_ACTION_PRESS);
+    check(s_count == 2 && strcmp(s_sent[0], release) == 0 && strcmp(s_sent[1], press) == 0,
+          "it releases the other Bluetooth device's key first, then presses");
+    snprintf(release, sizeof(release), "7/VolumeUp %d", HW_BTN_ACTION_RELEASE);
+    check(!sent(release), "the infrared hold goes on");
+    uint64_t t2 = get_now_ms();
+    s_count = 0;
+    hold_service(t2 + 3100);
+    snprintf(release, sizeof(release), "bt1/Select %d", HW_BTN_ACTION_RELEASE);
+    check(!sent(release), "the first Bluetooth key's time up later sends no second release");
+
+    /* sending: the state event counts a held key like GET /api/activity, and the release of the
+     * last key with nothing left to send publishes sending false */
+    hold_release();
+    g_queue_len = 0;
+    g_bg_len = 0;
+    orch_step_t ok = held_step("7", "Ok", 1000);
+    hold_press(&ok);
+    pthread_mutex_lock(&g_act_lock);
+    set_state(ORCH_STATE_RUNNING);
+    pthread_mutex_unlock(&g_act_lock);
+    check(s_ev_sending == 1 && orch_is_sending(), "the state event says sending while a key is held");
+    int before = s_ev_count;
+    hold_service(get_now_ms() + 1100);
+    check(s_ev_count == before + 1 && s_ev_sending == 0 && !orch_is_sending(),
+          "the release of the last held key publishes sending false");
 
     if (g_fails) {
         printf("[!] %d check(s) failed\n", g_fails);

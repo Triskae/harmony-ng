@@ -1554,6 +1554,7 @@ paths:
                     steps:
                       - {description: "Starting: PowerOn", type: 2, deviceId: "70321456", command: PowerOn, delayMs: 250}
                       - {description: Activity switched, type: 4, stepType: Switched, delayMs: 0}
+                    # a step with a hold also has holdMs: the key is held that long before its delay runs
                     backgroundSteps: []
         '400':
           description: No activity given (Missing activity parameter)
@@ -1761,8 +1762,8 @@ paths:
                 type: {type: string}
                 icon: {type: string}
                 order: {type: integer, description: "Display Order. Left out, an existing activity keeps its order and a new one is put after the highest (99 at most)"}
-                startSequence: {type: array}
-                stopSequence: {type: array}
+                startSequence: {type: array, items: {type: object, properties: {type: {type: string, enum: [Command, BTCommand, Delay, Switched]}, deviceId: {type: string}, command: {type: string}, delay: {type: integer, minimum: 0, maximum: 120000, description: "ms after the step (after the release when the key is held)"}, hold: {type: integer, minimum: 0, maximum: 10000, description: "Command steps: ms the key is held; 0 or left out, a tap"}}}}
+                stopSequence: {type: array, items: {type: object, properties: {type: {type: string, enum: [Command, BTCommand, Delay, Switched]}, deviceId: {type: string}, command: {type: string}, delay: {type: integer, minimum: 0, maximum: 120000, description: "ms after the step (after the release when the key is held)"}, hold: {type: integer, minimum: 0, maximum: 10000, description: "Command steps: ms the key is held; 0 or left out, a tap"}}}}
                 deviceIds: {type: array, items: {type: string}, description: "Devices of the activity (also accepted as devices)"}
             example:
               id: "123456"
@@ -1827,7 +1828,7 @@ paths:
       tags:
         - Activities
       summary: Test sequence execution
-      description: Runs the steps one after the other before answering. Each step waits its delay, at most 3 s; at most 64 steps.
+      description: Runs the steps one after the other before answering. Each step waits its delay, at most 3 s, and a Command step with a hold keeps its key down that long first (at most 10 s); at most 64 steps, and the steps left after 300 s are not sent.
       requestBody:
         required: true
         content:
@@ -1844,6 +1845,10 @@ paths:
                 - type: Command
                   deviceId: "70321456"
                   command: PowerToggle
+                - type: Command
+                  deviceId: "70321456"
+                  command: VolumeUp
+                  hold: 2000
                 - type: Delay
                   delay: 500
       responses:

@@ -17,6 +17,16 @@
 #include <unistd.h>
 #include <pthread.h>
 
+#include "hw_action.h" /* HW_HOLD_MAX_MS */
+
+/* A step's hold in ms (activities.json stores it as a number), at most HW_HOLD_MAX_MS. The remote's
+ * switch screen counts it in the step's delay: the Hub's next step comes after the release. */
+static int step_hold_ms(const cJSON *step) {
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(step, "hold");
+    if (!h || !cJSON_IsNumber(h) || h->valuedouble <= 0) return 0;
+    return h->valuedouble > HW_HOLD_MAX_MS ? HW_HOLD_MAX_MS : (int)h->valuedouble;
+}
+
 /* A push skipped because a remote update was being prepared or sent: pushed once the update
  * state is idle again (rf_config_push_retry_skipped(), from the main loop) */
 static volatile bool s_skipped_for_update;
@@ -571,6 +581,7 @@ static void *config_push_once(void *arg) {
                                         local_steps[local_count].name[15] = '\0';
                                         if (d <= 0) d = 250;
                                         if (d > 20000) d = 20000;
+                                        d += step_hold_ms(sitem);
                                         local_steps[local_count].delay_ms = (uint16_t)d;
                                         local_count++;
                                     } else if (ctype && cJSON_IsString(ctype) && strcasecmp(ctype->valuestring, "Delay") == 0) {
@@ -699,6 +710,7 @@ static void *config_push_once(void *arg) {
                                         } else if (cname && cJSON_IsString(cname) && cname->valuestring[0]) {
                                             if (d <= 0) d = 250;
                                             if (d > 20000) d = 20000;
+                                            d += step_hold_ms(st_item);
                                             strncpy(act_steps[total_step_count].act_id, act_id, 11);
                                             act_steps[total_step_count].act_id[11] = '\0';
                                             strncpy(act_steps[total_step_count].name, cname->valuestring, 15);

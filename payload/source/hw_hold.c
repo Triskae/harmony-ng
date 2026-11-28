@@ -28,7 +28,9 @@ int hw_hold_press(hw_hold_t *h, const char *target, int match_mode, const char *
     if (!h || !target || !target[0] || !command || !command[0]) return -1;
     hw_hold_release(h);
     hold_ms = hw_hold_clamp_ms((long)hold_ms);
+    hw_ir_hold_next_press_until(now_ms + hold_ms); /* a held infrared key plays to its end */
     int rc = hw_device_command_send_action(target, match_mode, command, HW_BTN_ACTION_PRESS);
+    hw_ir_hold_next_press_until(0);
     if (rc != 0) return rc;
     h->active = 1;
     h->match_mode = match_mode;

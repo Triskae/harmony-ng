@@ -260,6 +260,9 @@ static void host_link_down(const char *wake_key) {
 /* A mouse button held with no later mouse report (MOUSE_DOWN, then the client went away) is
  * released after this long, like a held key; every mouse report starts the time again */
 #define HOST_MOUSE_HOLD_MS 10000
+/* A held key is released by itself after this long: the longest timed hold of the daemon
+ * (HW_HOLD_MAX_MS, hw_action.h). Keep the two together. */
+#define HOST_KEY_HOLD_MAX_MS 10000
 
 void send_host_mouse_report(uint8_t buttons, int8_t dx, int8_t dy, int8_t wheel) {
     uint16_t cid = get_target_host_hid_cid();
@@ -321,7 +324,7 @@ void send_host_keyboard_report(uint8_t modifier, uint8_t keycode) {
     bt_hid_send_report(cid, press, sizeof(press));
     g_host_pending_cid = cid;
     g_host_pending_release_type = 1;
-    arm_host_key_release_timer(g_host_send_hold_mode ? 10000 : 40);
+    arm_host_key_release_timer(g_host_send_hold_mode ? HOST_KEY_HOLD_MAX_MS : 40);
     g_keys_sent++;
     update_bthid_status();
 }
@@ -342,7 +345,7 @@ void send_host_consumer_report(uint16_t usage_id) {
     bt_hid_send_report(cid, press, sizeof(press));
     g_host_pending_cid = cid;
     g_host_pending_release_type = 2;
-    arm_host_key_release_timer(g_host_send_hold_mode ? 10000 : 40);
+    arm_host_key_release_timer(g_host_send_hold_mode ? HOST_KEY_HOLD_MAX_MS : 40);
     g_keys_sent++;
     update_bthid_status();
 }

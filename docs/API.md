@@ -1142,7 +1142,12 @@ Saves activity configuration with start and stop sequence steps.
     cancel, or a new transition, releases every key that is still held. Infrared has one
     transmitter: a held infrared key ends when another infrared command goes out (a background
     step to another infrared device, for example), and it is not started again for the rest of its
-    hold. The timing is the one of MQTT `send_command` with `hold_secs`. A `BTCommand` step (a raw `HID:` or `BT:` code) keeps no `hold`: hold the
+    hold. Bluetooth also holds one key for all its hosts: any other Bluetooth key ends a held
+    Bluetooth key (another Bluetooth step, or a key pressed on the remote after `Switched`), and a
+    Bluetooth step that holds a key first releases the key another Bluetooth device holds. A hold
+    on a Bluetooth device that a stop sequence switches off belongs before `Switched` or in the
+    device's `powerOffSequence`: after `Switched` its link may close under the held key. The
+    timing is the one of MQTT `send_command` with `hold_secs`. A `BTCommand` step (a raw `HID:` or `BT:` code) keeps no `hold`: hold the
     device's command instead (a `Command` step of a Bluetooth device). The steps of a device's
     `powerOnSequence` and `powerOffSequence` (3.2) take `hold` the same way.
 - **Response `200 OK`**: `{"ok": true, "message": "Activity saved successfully"}`

@@ -167,7 +167,7 @@ static void set_state_ex(orch_state_t st, int emit) {
     snprintf(line, sizeof(line), "%s\n", orch_state_name(st));
     (void)atomic_file_write_str("/tmp/activity_state", line);
     if (!emit) return;
-    int sending = (g_queue_len > 0 || g_bg_len > 0) ? 1 : 0;
+    int sending = orch_is_sending(); /* a held key too, as GET /api/activity */
     if ((int)st == g_last_emitted_state && strcmp(g_current_act, g_last_emitted_act) == 0 &&
         strcmp(g_queued_act, g_last_emitted_queued) == 0 && sending == g_last_emitted_sending) return;
     g_last_emitted_state = (int)st;
@@ -469,9 +469,13 @@ static size_t orch_take_pending_tail(orch_step_t *out, size_t max) {
         orch_bg_step_t *b = &g_bg_queue[idx[i]];
         orch_step_t *s = &out[n++];
         *s = b->step;
-        /* the gap to the next one as it was planned; the step's own delay after the last */
+        /* the gap to the next one as it was planned; the step's own delay after the last. The gap
+         * runs from the press and already holds the step's hold, which orch_tick_locked() adds
+         * to the delay again: it is taken off here. */
         if (i + 1 < cnt && b->target_time_ms && g_bg_queue[idx[i + 1]].target_time_ms > b->target_time_ms) {
-            s->delay_ms = (uint32_t)(g_bg_queue[idx[i + 1]].target_time_ms - b->target_time_ms);
+            uint32_t gap = (uint32_t)(g_bg_queue[idx[i + 1]].target_time_ms - b->target_time_ms);
+            uint32_t hold = (s->type == STEP_ACT_DEVICE_CMD) ? hw_hold_clamp_ms((long)s->hold_ms) : 0;
+            s->delay_ms = gap > hold ? gap - hold : 1; /* 0 would be the default gap of 50 ms */
         }
         snprintf(s->description, sizeof(s->description), "Tail of the last switch: %.100s", b->step.description);
         b->executed = 1;
@@ -509,7 +513,27 @@ static void hold_release(void) {
     }
 }
 
+/* hub_btstack keeps one pressed key for all its hosts, and every key ends the one before. A
+ * Bluetooth hold releases the other Bluetooth holds first, so their release, later, does not end
+ * the new key. */
+static int hold_is_bt(const char *device_id) {
+    char addr[32];
+    return device_id && device_id[0] && hw_device_bt_host(device_id, addr, sizeof(addr));
+}
+
+static void hold_release_other_bt(const char *device_id) {
+    if (!hold_is_bt(device_id)) return;
+    for (int i = 0; i < ORCH_MAX_HOLDS; i++) {
+        if (!g_held[i].active || strcmp(g_held[i].target, device_id) == 0 || !hold_is_bt(g_held[i].target)) continue;
+        printf("[*] Orch: release held '%s' (device '%s'): Bluetooth holds one key\n", g_held[i].command,
+               g_held[i].target);
+        fflush(stdout);
+        hw_hold_release(&g_held[i]);
+    }
+}
+
 static int hold_press(const orch_step_t *step) {
+    hold_release_other_bt(step->device_id);
     hw_hold_t *slot = NULL;
     for (int i = 0; i < ORCH_MAX_HOLDS && !slot; i++) {
         if (g_held[i].active && strcmp(g_held[i].target, step->device_id) == 0) slot = &g_held[i];
@@ -526,7 +550,7 @@ static int hold_press(const orch_step_t *step) {
     uint32_t hold = hw_hold_clamp_ms((long)step->hold_ms);
     printf("[*] Orch: hold '%s' (device '%s') for %u ms\n", step->command_name, step->device_id, hold);
     fflush(stdout);
-    return hw_hold_press(slot, step->device_id, 1, step->command_name, hold, get_now_ms());
+    return hw_hold_press(slot, step->device_id, 0, step->command_name, hold, get_now_ms()); /* id or name, as a tap */
 }
 
 static int hold_active(void) {
@@ -536,9 +560,11 @@ static int hold_active(void) {
     return 0;
 }
 
-/* Keeps the held keys down, and releases each when its time is up; 1 while a key is held */
+/* Keeps the held keys down, and releases each when its time is up; 1 while a key is held. The
+ * release of the last key, with nothing left to send, publishes sending false (a held key counts
+ * as sending, orch_is_sending()) and runs the check an activities change left for then. */
 static int hold_service(uint64_t now) {
-    int holding = 0;
+    int holding = 0, released = 0;
     for (int i = 0; i < ORCH_MAX_HOLDS; i++) {
         if (!g_held[i].active) continue;
         char cmd[sizeof(g_held[i].command)], dev[sizeof(g_held[i].target)];
@@ -547,8 +573,18 @@ static int hold_service(uint64_t now) {
         if (hw_hold_tick(&g_held[i], now)) {
             holding = 1;
         } else {
+            released = 1;
             printf("[*] Orch: release held '%s' (device '%s')\n", cmd, dev);
             fflush(stdout);
+        }
+    }
+    if (released && !holding && g_queue_len == 0 && g_bg_len == 0) {
+        pthread_mutex_lock(&g_act_lock);
+        set_state(g_state);
+        pthread_mutex_unlock(&g_act_lock);
+        if (g_recheck_current && !orch_is_busy()) {
+            g_recheck_current = 0;
+            orch_check_current_known();
         }
     }
     return holding;
@@ -850,6 +886,8 @@ static void orch_format_preview_json(const char *target_id,
         if (steps[i].device_id[0]) cJSON_AddStringToObject(st, "deviceId", steps[i].device_id);
         if (steps[i].command_name[0]) cJSON_AddStringToObject(st, "command", steps[i].command_name);
         cJSON_AddNumberToObject(st, "delayMs", steps[i].delay_ms);
+        /* the key held before the delay runs; trueEndMs counts it */
+        if (steps[i].hold_ms > 0) cJSON_AddNumberToObject(st, "holdMs", hw_hold_clamp_ms((long)steps[i].hold_ms));
         cJSON_AddItemToArray(arr, st);
     }
     cJSON_AddItemToObject(pj, "steps", arr);
@@ -862,6 +900,8 @@ static void orch_format_preview_json(const char *target_id,
         if (bg_steps[i].step.device_id[0]) cJSON_AddStringToObject(st, "deviceId", bg_steps[i].step.device_id);
         if (bg_steps[i].step.command_name[0]) cJSON_AddStringToObject(st, "command", bg_steps[i].step.command_name);
         cJSON_AddNumberToObject(st, "delayMs", bg_steps[i].step.delay_ms);
+        if (bg_steps[i].step.hold_ms > 0)
+            cJSON_AddNumberToObject(st, "holdMs", hw_hold_clamp_ms((long)bg_steps[i].step.hold_ms));
         cJSON_AddNumberToObject(st, "relativeOffsetMs", bg_steps[i].relative_offset_ms);
         cJSON_AddNumberToObject(st, "anchorStep", bg_steps[i].anchor_step);
         cJSON_AddItemToArray(bg_arr, st);

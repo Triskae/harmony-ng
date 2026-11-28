@@ -6,8 +6,11 @@ A sequence step that holds its key ("hold", ms) instead of tapping it (orchestra
 - a power off with such a step takes at least the hold
 - an activity saved with a held step keeps the hold, capped at 10 s; a raw Bluetooth (HID:) step
   keeps no hold
+- the step after a held one goes out after the release
 - Test Live (POST /api/activity-test-sequence) holds a key for its hold, given as a number or as
   a string holding one
+- a step that names its device by name holds its key, as a tap of it goes out
+- a cancel, and a new request, release a key a step still holds
 The daemon runs with --dry-run: the infrared sends are simulated (a Bluetooth send fails there,
 as hub_btstack does not run, so the held step uses an infrared device).
 """
@@ -24,17 +27,26 @@ from hub_harness import HubHarness, SAMPLE_CONFIG  # noqa: E402
 
 PORT = 8984
 HOLD_MS = 1500
+LONG_HOLD_MS = 4000
 
 
 def config_dir():
     d = tempfile.mkdtemp(prefix="step_hold_")
     devices = json.load(open(os.path.join(SAMPLE_CONFIG, "devices.json")))
     player = next(dv for dv in devices["devices"] if str(dv["id"]) == "2")  # infrared Media Player
-    player["powerOffSequence"] = [{"type": "Command", "deviceId": "2", "command": "PowerToggle", "hold": HOLD_MS}]
+    player["powerOffSequence"] = [{"type": "Command", "deviceId": "2", "command": "PowerToggle", "hold": HOLD_MS},
+                                  {"type": "Command", "deviceId": "2", "command": "Home"}]
     acts = json.load(open(os.path.join(SAMPLE_CONFIG, "activities.json")))
     acts["activities"].append({
         "id": "12", "name": "Play", "type": "Custom", "order": 3, "deviceIds": ["2"],
         "startSequence": [{"type": "Command", "deviceId": "2", "command": "Home"}],
+        "stopSequence": [],
+    })
+    # a long hold after Switched (the activity runs while it is held), the device named by its name
+    acts["activities"].append({
+        "id": "13", "name": "Hold", "type": "Custom", "order": 4, "deviceIds": ["2"],
+        "startSequence": [{"type": "Switched"},
+                          {"type": "Command", "deviceId": "Media Player", "command": "Select", "hold": LONG_HOLD_MS}],
         "stopSequence": [],
     })
     json.dump(devices, open(os.path.join(d, "devices.json"), "w"))
@@ -57,6 +69,18 @@ def wait_state(hub, activity, timeout=10.0):
         s = state_of(hub)
         if str(s.get("activity")) == activity and s.get("state") in (0, 2) and not s.get("busy") \
                 and not s.get("sending"):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def wait_held(hub, activity, timeout=10.0):
+    """Waits until the activity is reached and its step after Switched holds its key"""
+    end = time.time() + timeout
+    while time.time() < end:
+        s = state_of(hub)
+        if str(s.get("activity")) == activity and not s.get("busy") and s.get("sending"):
+            time.sleep(0.3)
             return True
         time.sleep(0.05)
     return False
@@ -111,6 +135,31 @@ def main():
                 took = time.time() - t0
                 check(st == 200 and isinstance(r, dict) and r.get("executed") == 1 and took >= 0.6,
                       "Test Live holds the key %r ms" % (hold,), "%s %s %.2f s" % (st, r, took))
+            # A cancel during a hold releases the key: nothing is sent any more well before the hold is up
+            st, _ = hub.http_post("/api/activity", {"activity": "13"})
+            check(st == 200, "start activity 13 (a step holds Select %d ms)" % LONG_HOLD_MS)
+            check(wait_held(hub, "13") and state_of(hub).get("sending") is True, "sending while the key is held")
+            t0 = time.time()
+            st, _ = hub.http_post("/api/activity-cancel", {})
+            check(st == 200, "cancel during the hold")
+            end = time.time() + 2
+            while time.time() < end and state_of(hub).get("sending"):
+                time.sleep(0.05)
+            took = time.time() - t0
+            check(not state_of(hub).get("sending") and took < 1.5, "the cancel releases the held key",
+                  "%.2f s" % took)
+
+            # A new request during a hold releases the key before its own steps. The cancel came
+            # after Switched: activity 13 is running, so it is switched off first.
+            hub.http_post("/api/poweroff", {})
+            check(wait_state(hub, "-1", timeout=15), "powered off before starting activity 13 again")
+            st, _ = hub.http_post("/api/activity", {"activity": "13"})
+            check(st == 200, "start activity 13 again")
+            check(wait_held(hub, "13"), "activity 13 holds its key again")
+            st, _ = hub.http_post("/api/poweroff", {})
+            check(st == 200, "power off during the hold")
+            check(wait_state(hub, "-1", timeout=15), "powered off after the cut hold")
+
             act = saved_activity(hub, "12") or {}
             stop = act.get("stopSequence", [])
             holds = [s.get("hold") for s in stop]
@@ -128,8 +177,21 @@ def main():
         check(not not_sent, "the held key was sent", str(not_sent))
         check(release_i > hold_i >= 0, "the held key is released", "hold %d, release %d" % (hold_i, release_i))
         done_i = next((i for i, l in enumerate(log) if i > hold_i >= 0 and "Orch step" in l), -1)
-        check(done_i < 0 or done_i > release_i, "no step of the power off is sent before the release",
+        check(done_i > release_i, "the step after the held one is sent after the release",
               "release %d, next step %d" % (release_i, done_i))
+
+        # activity 13: the step names its device by name
+        named = [i for i, l in enumerate(log) if "Orch: hold 'Select' (device 'Media Player')" in l]
+        not_sent = [l for l in log if "not sent" in l and "Select" in l]
+        check(len(named) >= 2 and not not_sent, "a step naming its device by name holds its key",
+              "%d hold(s), %s" % (len(named), not_sent))
+        released = [i for i, l in enumerate(log) if "Orch: release held 'Select'" in l]
+        check(len(released) >= 2 and len(named) >= 2 and named[0] < released[0] < named[1] < released[1],
+              "each cut hold of Select is released", "holds %s, releases %s" % (named, released))
+        off_i = next((i for i, l in enumerate(log) if len(named) >= 2 and i > named[1]
+                      and "Orch: hold 'PowerToggle'" in l), -1)
+        check(len(released) >= 2 and released[1] < off_i, "the power off releases the held key before its own steps",
+              "release %s, power off hold %d" % (released[1:2], off_i))
     finally:
         shutil.rmtree(cfg, ignore_errors=True)
 

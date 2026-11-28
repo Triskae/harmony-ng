@@ -66,6 +66,14 @@ int hw_ir_send_raw(uint32_t freq_hz, const uint32_t *timings_us, size_t count, u
 #define HW_IR_HOLD_DEADLINE_MS 600
 
 /*
+ * A timed hold (hw_hold.c) knows its end at the press: the next press of an infrared key on the
+ * calling thread keeps playing until release_ms (CLOCK_MONOTONIC) plus HW_IR_HOLD_DEADLINE_MS
+ * even when its holds come late (a caller's loop busy with another device's delay), so only its
+ * release or another infrared send ends it. Used once, by that press; 0 clears it.
+ */
+void hw_ir_hold_next_press_until(uint64_t release_ms);
+
+/*
  * Ends the held IR key, if any, after the frame on air (does not wait for it).
  */
 int hw_ir_cancel(uint8_t ports);
@@ -91,14 +99,20 @@ int hw_ir_send_harmony_keycode(const char *keycode, uint8_t ports, uint8_t repea
  * hw_hold_run() does it in place.
  *
  * Infrared has one transmitter: a held infrared key ends when another infrared command goes
- * out, and the holds that follow do not start it again (hw_action.c, the held-key player).
+ * out, and the holds that follow do not start it again (hw_action.c, the held-key player). A
+ * late hold does not end it: the press gives the player the release time
+ * (hw_ir_hold_next_press_until()).
+ *
+ * Bluetooth: hub_btstack keeps one pressed key for all hosts. Any other Bluetooth key ends a held
+ * Bluetooth key, and the orchestrator releases its other Bluetooth holds before a Bluetooth press.
  */
 #define HW_HOLD_BEAT_MS 300
+/* hub_btstack releases a held key by itself after HOST_KEY_HOLD_MAX_MS (bt_hid.c): keep the two equal */
 #define HW_HOLD_MAX_MS 10000
 
 typedef struct {
     int active;
-    int match_mode;         /* as for hw_device_command_send_action(): 1 by device id, 0 by name */
+    int match_mode;         /* as for hw_device_command_send_action(): 1 by id, 2 by name, 0 either */
     char target[128];
     char command[64];
     uint64_t release_ms;    /* CLOCK_MONOTONIC */

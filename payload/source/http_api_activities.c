@@ -18,6 +18,9 @@
 #include <time.h>
 #include "http_api_devices.h"
 
+/* The longest a Test Live request runs (POST /api/activity-test-sequence) */
+#define TEST_LIVE_MAX_MS 300000
+
 static cJSON *build_activity_steps_cjson(const char *seq_text) {
     cJSON *arr = cJSON_CreateArray();
     if (!arr) return NULL;
@@ -727,8 +730,17 @@ int http_api_activities_handle(int client_fd, const char *method, const char *cl
                 return 1;
             }
             if (step_arr && cJSON_IsArray(step_arr)) {
+                /* a whole request takes at most TEST_LIVE_MAX_MS (as the MQTT sequencer): with
+                 * holds, 64 steps could keep a worker 64 x 13 s */
+                uint64_t t_end = hw_hold_now_ms() + TEST_LIVE_MAX_MS;
                 cJSON *st = NULL;
                 cJSON_ArrayForEach(st, step_arr) {
+                    uint64_t t_now = hw_hold_now_ms();
+                    if (t_now >= t_end) {
+                        printf("[!] Test Live: %d ms used up, the steps left are not sent\n", TEST_LIVE_MAX_MS);
+                        fflush(stdout);
+                        break;
+                    }
                     cJSON *jtype = cJSON_GetObjectItemCaseSensitive(st, "type");
                     const char *type = (jtype && cJSON_IsString(jtype)) ? jtype->valuestring : "";
 
@@ -762,8 +774,10 @@ int http_api_activities_handle(int client_fd, const char *method, const char *cl
                     if (cJSON_IsNumber(jhold)) hold_ms = hw_hold_clamp_ms((long)jhold->valuedouble);
                     else if (cJSON_IsString(jhold) && jhold->valuestring) hold_ms = hw_hold_clamp_ms(atol(jhold->valuestring));
 
+                    t_now = hw_hold_now_ms();
+                    if (hold_ms > 0 && t_now + hold_ms > t_end) hold_ms = t_now < t_end ? (uint32_t)(t_end - t_now) : 1;
                     if (dev_buf[0] && cmd[0] && hold_ms > 0 && strcasecmp(type, "BTCommand") != 0) {
-                        hw_hold_run(dev_buf, 1, cmd, hold_ms);
+                        hw_hold_run(dev_buf, 0, cmd, hold_ms); /* id or name, as the tap below */
                         executed++;
                     } else if (dev_buf[0] && cmd[0]) {
                         hw_device_command_send(dev_buf, cmd);

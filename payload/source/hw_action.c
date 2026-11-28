@@ -93,6 +93,13 @@ static uint64_t ir_hold_now_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
+/* A timed hold's release time for the next press of this thread (hw_ir_hold_next_press_until()) */
+static __thread uint64_t s_ir_next_press_until_ms;
+
+void hw_ir_hold_next_press_until(uint64_t release_ms) {
+    s_ir_next_press_until_ms = release_ms;
+}
+
 /* s_ir_hold.lock held on entry and on return; returns when a key is handed over */
 static void ir_hold_wait_for_key(void) {
     while (!s_ir_hold.active) {
@@ -218,6 +225,10 @@ static int ir_hold_press(const char *key, uint8_t *blob, size_t blob_len, uint8_
     s_ir_hold.ports = ports;
     s_ir_hold.min_parts = min_parts;
     s_ir_hold.deadline_ms = ir_hold_now_ms() + HW_IR_HOLD_DEADLINE_MS;
+    /* a timed hold plays until its release is due even when its holds come late */
+    if (!released && s_ir_next_press_until_ms + HW_IR_HOLD_DEADLINE_MS > s_ir_hold.deadline_ms)
+        s_ir_hold.deadline_ms = s_ir_next_press_until_ms + HW_IR_HOLD_DEADLINE_MS;
+    s_ir_next_press_until_ms = 0;
     s_ir_hold.stop = released ? 1 : 0;
     s_ir_hold.job++;
     if (job_out) *job_out = s_ir_hold.job;
@@ -240,12 +251,13 @@ static int ir_hold_wait_job(unsigned job) {
     return rc;
 }
 
-/* The hold of the key that is playing: it goes on for another HW_IR_HOLD_DEADLINE_MS. A hold
- * for any other key, or for none, does nothing. */
+/* The hold of the key that is playing: it goes on for at least another HW_IR_HOLD_DEADLINE_MS
+ * (a timed hold's later deadline stays). A hold for any other key, or for none, does nothing. */
 static void ir_hold_heartbeat(const char *key) {
     pthread_mutex_lock(&s_ir_hold.lock);
     if (s_ir_hold.active && !s_ir_hold.stop && key && strcmp(s_ir_hold.key, key) == 0) {
-        s_ir_hold.deadline_ms = ir_hold_now_ms() + HW_IR_HOLD_DEADLINE_MS;
+        uint64_t d = ir_hold_now_ms() + HW_IR_HOLD_DEADLINE_MS;
+        if (d > s_ir_hold.deadline_ms) s_ir_hold.deadline_ms = d;
     }
     pthread_mutex_unlock(&s_ir_hold.lock);
 }
