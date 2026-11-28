@@ -251,7 +251,9 @@ The binaries kept in the repository (SSH servers, kernel modules) are listed in
 ```bash
 # 1. Compile Hub native binaries (MIPS32 big-endian): hub_util, hub_daemon, hub_rf and hub_btstack.
 #    For hub_btstack it runs build/build_btstack.sh, which fetches the pinned BTstack commit
-#    with git (network needed). "./build/compile_all.sh hub" builds the first three only.
+#    with git (network needed once: a build/tmp/btstack already at that commit is reused).
+#    "./build/compile_all.sh hub" builds the first three only. BearSSL and BusyBox come from
+#    build/vendor (no download).
 ./build/compile_all.sh all
 
 # 2. Compile the remote binaries (ARM): remote_ui, remote_sync, the themes and remote_ui.ota.gz

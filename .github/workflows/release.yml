@@ -210,6 +210,20 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/toolchain.tar.bz2" "https://toolchains.bootlin.com/downloads/releases/toolchains/mips32/tarballs/mips32--uclibc--stable-2017.05-toolchains-1-1.tar.bz2"
           echo "a75aeb0f82eaeaf1989a7dfdf80219486b5ed1470c29c6f253fbcf824922c29f  $RUNNER_TEMP/toolchain.tar.bz2" | sha256sum -c -
           tar -xjf "$RUNNER_TEMP/toolchain.tar.bz2" -C build/toolchains/
+      # build/build_btstack.sh fetches BTstack from GitHub only when build/tmp/btstack is not the
+      # pinned commit, so a cache hit needs no download. The key is the pinned commit; the patch
+      # is applied to a clean tree on every build, and the tree is reset before the cache is saved.
+      - name: Read the pinned BTstack commit
+        id: btstack-commit
+        run: |
+          commit=$(sed -n 's/^BTSTACK_COMMIT="\([0-9a-f]*\)".*/\1/p' build/build_btstack.sh)
+          [ -n "$commit" ] || { echo "BTSTACK_COMMIT not found in build/build_btstack.sh"; exit 1; }
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - name: Cache BTstack Sources
+        uses: actions/cache@v5
+        with:
+          path: build/tmp/btstack
+          key: btstack-${{ steps.btstack-commit.outputs.commit }}
       - name: Compile Hub Binaries & Extended BusyBox
         run: |
           chmod +x build/*.sh
@@ -227,6 +241,8 @@ jobs:
           # never in the bundle or the OTA package
           mkdir -p build/output/btstack_dev_asset
           cp -f build/output/hub_btstack_dev build/output/hub_btstack_dev.debug build/output/hub_btstack.debug build/output/btstack_dev_asset/
+      - name: Reset the BTstack tree for the cache
+        run: git -C build/tmp/btstack checkout -q -- . && git -C build/tmp/btstack clean -fdq
       - name: Archive Hub Binaries
         uses: actions/upload-artifact@v7
         with:
