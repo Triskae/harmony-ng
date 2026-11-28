@@ -163,6 +163,7 @@ While Harmony-NG restores complete local independence and dramatically reduces m
 ├── frontend/               # New web UI (Vite), built by build/build_webui.py
 ├── build/                  # Cross-compilation toolchains, build, and deploy scripts
 │   ├── patches/            # BTstack patches
+│   ├── vendor/             # BearSSL sources kept in the repository (no download)
 │   ├── build_apk.py        # Android APK build and package script
 │   ├── build_btstack.sh    # MIPS32 BTstack cross-compilation script
 │   ├── build_webui.py      # Frontend Vite builder and gzip compressor

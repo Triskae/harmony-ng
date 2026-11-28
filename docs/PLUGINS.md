@@ -381,7 +381,8 @@ only `libc.so.0`). The firmware's own TLS client (`hub_fetch`, for updates and H
 it too. A plugin links it instead of a static copy of its own:
 
 ```bash
-# BearSSL sources at the pinned commit, then the firmware build makes payload/lib/libbearssl.so.0
+# BearSSL sources at the pinned commit (copied from build/vendor/bearssl, no download),
+# then the firmware build makes payload/lib/libbearssl.so.0
 sh build/fetch_bearssl.sh
 sh build/compile_all.sh bearssl
 

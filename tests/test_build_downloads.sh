@@ -3,7 +3,8 @@
 # build/build_busybox.sh runs from a scratch copy of the repository layout with a fake curl
 # first in PATH (no network): a download that does not match, or an HTTP error page saved by
 # an earlier run, must stop the build and leave no tarball under the final name. The CI and
-# release workflows must check every Bootlin toolchain tarball with sha256sum.
+# release workflows must check every Bootlin toolchain tarball with sha256sum. BearSSL is prepared
+# from build/vendor/bearssl with no network, and that copy is the pinned upstream tree.
 set -eu
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
@@ -47,4 +48,39 @@ for wf in "$REPO_ROOT/.github/workflows/ci.yml" "$REPO_ROOT/.github/workflows/re
     fi
 done
 
-echo "PASS: build downloads are checked against their SHA-256"
+# 4. BearSSL comes from the vendored copy: no git, no curl (both fail and log if called)
+mkdir -p "$WORK/nonet"
+for tool in git curl wget; do
+    printf '#!/bin/sh\necho "%s $*" >> "$NONET_LOG"\nexit 1\n' "$tool" > "$WORK/nonet/$tool"
+    chmod +x "$WORK/nonet/$tool"
+done
+: > "$WORK/nonet.log"
+BEARSSL_COMMIT=$(sed -n 's/^BEARSSL_COMMIT="\([0-9a-f]*\)"$/\1/p' "$REPO_ROOT/build/fetch_bearssl.sh")
+for run in 1 2; do
+    PATH="$WORK/nonet:$PATH" NONET_LOG="$WORK/nonet.log" BEARSSL_DIR="$WORK/bearssl" \
+        sh "$REPO_ROOT/build/fetch_bearssl.sh" >"$WORK/out" 2>&1 \
+        || { echo "FAIL: fetch_bearssl.sh run $run without network"; cat "$WORK/out"; exit 1; }
+done
+[ ! -s "$WORK/nonet.log" ] || { echo "FAIL: fetch_bearssl.sh reached for the network:"; cat "$WORK/nonet.log"; exit 1; }
+[ -f "$WORK/bearssl/inc/bearssl.h" ] || { echo "FAIL: no BearSSL sources in BEARSSL_DIR"; exit 1; }
+[ "$(cat "$WORK/bearssl/.bearssl_commit")" = "$BEARSSL_COMMIT" ] || { echo "FAIL: wrong .bearssl_commit"; exit 1; }
+# without the vendored copy it stops, and still does not download
+mkdir -p "$WORK/novendor/build"
+cp "$REPO_ROOT/build/fetch_bearssl.sh" "$WORK/novendor/build/"
+if PATH="$WORK/nonet:$PATH" NONET_LOG="$WORK/nonet.log" sh "$WORK/novendor/build/fetch_bearssl.sh" >"$WORK/out" 2>&1; then
+    echo "FAIL: fetch_bearssl.sh without build/vendor/bearssl did not stop"; exit 1
+fi
+grep -q 'BEARSSL_FETCH=1' "$WORK/out" || { echo "FAIL: no word about BEARSSL_FETCH"; cat "$WORK/out"; exit 1; }
+[ ! -s "$WORK/nonet.log" ] || { echo "FAIL: fetch_bearssl.sh downloaded without BEARSSL_FETCH=1"; exit 1; }
+
+# 5. build/vendor/bearssl is the upstream tree of the pinned commit, byte for byte
+BEARSSL_TREE=$(sed -n 's/^BEARSSL_TREE="\([0-9a-f]*\)"$/\1/p' "$REPO_ROOT/build/fetch_bearssl.sh")
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    tree=$(cd "$REPO_ROOT" && GIT_INDEX_FILE="$WORK/vendor.index" git add -f build/vendor/bearssl \
+        && GIT_INDEX_FILE="$WORK/vendor.index" git write-tree --prefix=build/vendor/bearssl/)
+    [ "$tree" = "$BEARSSL_TREE" ] || { echo "FAIL: build/vendor/bearssl has tree $tree, not $BEARSSL_TREE (BearSSL $BEARSSL_COMMIT)"; exit 1; }
+else
+    echo "[*] not a git checkout: vendored BearSSL tree not checked"
+fi
+
+echo "PASS: build downloads are checked against their SHA-256, BearSSL builds without network"
