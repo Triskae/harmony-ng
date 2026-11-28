@@ -235,6 +235,21 @@ pick_official_branch
         (self.root / "data/harmony/update_channel").unlink()
         self.assertEqual(self.run_sh(STABLE, "fetch-remote-ota", 'echo "$REPO"').strip(), BETA)
 
+    def test_quick_read_takes_the_v4_layout(self):
+        # a v4 branch has a plain VERSION and no v2/ (scripts/publish_ota.py from 4.0.0 on)
+        (self.root / "data/harmony/VERSION").write_text("4.0.0\n")
+        (self.root / "data/harmony/update_channel").write_text("beta\n")
+        self.publish(STABLE, "3.9.0")
+        (self.serve[BETA] / "v2").rmdir()
+        (self.serve[BETA] / "VERSION").write_text("4.1.0\n")
+        st = self.check()
+        self.assertEqual((st["remote_version"], st["update_available"]), ("4.1.0", True))
+        self.assertIn(f"source={BETA}", (self.root / "data/harmony/update_state.conf").read_text())
+        # the remote image of the own version, found on the other branch in that layout
+        (self.root / "data/harmony/VERSION").write_text("4.1.0\n")
+        (self.root / "data/harmony/update_channel").unlink()
+        self.assertEqual(self.run_sh(STABLE, "fetch-remote-ota", 'echo "$REPO"').strip(), BETA)
+
     def test_stable_channel_never_sees_beta(self):
         self.publish(STABLE, "3.4.0")
         self.publish(BETA, "3.6.0")

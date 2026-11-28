@@ -401,12 +401,15 @@ is_version_newer() {
 }
 
 # source_version URL [quick]: the release the source's VERSION file names, "" when it cannot be
-# read (v2 checks v2/VERSION first). quick: v2/VERSION once (an official branch that is only
-# compared: a missing branch must not cost the retries and their waits)
+# read (v2 checks v2/VERSION first). quick: v2/VERSION once, then the plain VERSION once (an
+# official branch that is only compared: a missing branch must not cost the retries and their
+# waits). A v4 branch has only the plain VERSION (scripts/publish_ota.py); on a v3 branch it says
+# 1.14.0 (for 1.x Hubs), which matches no 2.x or newer Hub.
 source_version() {
   _sv=""
   if [ "$2" = quick ]; then
-    download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 1 && _sv=$(cat /tmp/ota_ver.$$ | tr -d '\r\n v')
+    { download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 1 || \
+      download_retry "$1/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 1; } && _sv=$(cat /tmp/ota_ver.$$ | tr -d '\r\n v')
   elif download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
      download_retry "$1/VERSION_V2?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
      download_retry "$1/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 3; then
