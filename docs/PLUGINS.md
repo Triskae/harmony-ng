@@ -505,7 +505,9 @@ into `next`, a release block or a list of them:
 
 A Hub takes the newest `next` release whose `min_harmony_version` it meets in place of the entry
 (its `version`, `download_url`, `sha256` and minimum) for the marketplace, installs and pulls by
-id, when it is newer than the top level. Any other Hub keeps the top level. `gen_repository.py`
+id, when it is newer than the top level, or when the Hub cannot run the top level (its own
+`min_harmony_version` is higher than the Hub's version): then even an older `next` release
+stands in. Any other Hub keeps the top level. `gen_repository.py`
 in `harmony-ng-plugins` keeps the last release without the new minimum at the top level and
 writes the newer ones into `next`. Both UIs offer an update only for a newer release, never for
 an older one than the installed plugin.
