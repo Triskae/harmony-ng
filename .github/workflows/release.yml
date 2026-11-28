@@ -399,7 +399,7 @@ jobs:
             gh release upload "v${VERSION}" release_assets/* --clobber
           else
             gh release create "v${VERSION}" release_assets/* $FLAGS \
-              --title "HarmonyNG v${VERSION}" \
+              --title "Harmony-NG v${VERSION}" \
               --notes-file release_notes.md
           fi
 

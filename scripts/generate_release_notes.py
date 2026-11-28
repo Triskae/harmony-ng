@@ -126,7 +126,7 @@ def categorize_commits(commits):
 
 def generate_markdown(version, prev_tag, categories, repo_slug):
     norm_version = version.lstrip("v")
-    lines = [f"### HarmonyNG Release v{norm_version}\n"]
+    lines = [f"### Harmony-NG Release v{norm_version}\n"]
 
     has_any = False
     for cat_name, items in categories.items():

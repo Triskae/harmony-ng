@@ -449,6 +449,16 @@ class PublishOta(unittest.TestCase):
         exists = step[step.index('if gh release view "v${VERSION}"'):step.index("else")]
         self.assertRegex(exists, r'gh release upload "v\$\{VERSION\}" release_assets/\* --clobber')
 
+    def test_release_uses_the_project_name(self):
+        # the official name is "Harmony-NG": release title and the heading of the release notes
+        text = (REPO_DIR / ".github" / "workflows" / "release.yml").read_text()
+        self.assertIn('--title "Harmony-NG v${VERSION}"', text)
+        self.assertNotIn("HarmonyNG", text)
+        sys.path.insert(0, str(REPO_DIR / "scripts"))
+        import generate_release_notes
+        md = generate_release_notes.generate_markdown("v3.1.0", None, {"Other Changes": []}, "iranl/harmony-ng")
+        self.assertTrue(md.startswith("### Harmony-NG Release v3.1.0"), md[:60])
+
     def test_branch_version_of_a_remote(self):
         with tempfile.TemporaryDirectory() as tmp:
             t = pathlib.Path(tmp)
