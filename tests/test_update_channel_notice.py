@@ -390,6 +390,13 @@ class PublishOta(unittest.TestCase):
                 os.environ.clear()
                 os.environ.update(old)
 
+    def test_release_rerun_replaces_the_assets(self):
+        # a re-run keeps the release; sha256sums.txt of the new run must not list the old archives
+        text = (REPO_DIR / ".github" / "workflows" / "release.yml").read_text()
+        step = text[text.index("- name: Create GitHub Release"):text.index("- name: Publish to OTA Branch")]
+        exists = step[step.index('if gh release view "v${VERSION}"'):step.index("else")]
+        self.assertRegex(exists, r'gh release upload "v\$\{VERSION\}" release_assets/\* --clobber')
+
     def test_branch_version_of_a_remote(self):
         with tempfile.TemporaryDirectory() as tmp:
             t = pathlib.Path(tmp)

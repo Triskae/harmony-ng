@@ -392,9 +392,11 @@ jobs:
           FLAGS=""
           [ "${{ github.event.inputs.prerelease }}" = "true" ] && FLAGS="$FLAGS --prerelease"
           [ "${{ github.event.inputs.draft }}" = "true" ] && FLAGS="$FLAGS --draft"
-          # a re-run after a failed OTA push finds the release there already
+          # a re-run after a failed OTA push finds the release there already: its assets are
+          # replaced, so the archives and sha256sums.txt come from the same run
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "Release v${VERSION} exists: kept."
+            echo "Release v${VERSION} exists: kept, assets replaced."
+            gh release upload "v${VERSION}" release_assets/* --clobber
           else
             gh release create "v${VERSION}" release_assets/* $FLAGS \
               --title "HarmonyNG v${VERSION}" \
