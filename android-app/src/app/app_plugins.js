@@ -376,8 +376,10 @@ export class HarmonyAppPlugins extends HarmonyAppHubsNetwork {
 
     container.innerHTML = this.marketplaceCatalog.map(item => {
       const installed = installedMap.get(item.id);
-      const isUpToDate = installed && installed.version === item.version;
-      const isUpdateAvailable = installed && installed.version !== item.version;
+      // only a newer catalog release is an update (a Hub may hold a newer one than the catalog
+      // offers it, e.g. a release for a newer HarmonyNG installed before its minimum was known)
+      const isUpdateAvailable = Boolean(installed && item.version && this.isVersionOlder(installed.version || '0', item.version));
+      const isUpToDate = installed && !isUpdateAvailable;
 
       return `
         <div class="card" style="margin-bottom: 12px; padding: 14px;">
@@ -394,6 +396,8 @@ export class HarmonyAppPlugins extends HarmonyAppHubsNetwork {
             <div>
               ${isUpToDate
                 ? `<span class="badge" style="color: var(--success); border: 1px solid var(--success); background: transparent;">${t('plg_installed_check')}</span>`
+                : item.compatible === false
+                  ? `<span class="badge" style="color: var(--warning); border: 1px solid var(--warning); background: transparent;" title="${escapeHtml(item.incompatible_reason || '')}">${tfHtml('plg_needs_version', { version: String(item.min_harmony_version || '').replace(/^v/, '') })}</span>`
                 : (isUpdateAvailable
                   ? `<button type="button" class="btn btn-xs btn-primary btn-install-plugin" data-url="${escapeHtml(item.download_url || '')}" data-sha="${escapeHtml(item.sha256 || '')}" data-id="${escapeHtml(item.id)}">${tfHtml('plg_update_to', { version: item.version })}</button>`
                   : `<button type="button" class="btn btn-xs btn-primary btn-install-plugin" data-url="${escapeHtml(item.download_url || '')}" data-sha="${escapeHtml(item.sha256 || '')}" data-id="${escapeHtml(item.id)}">${t('plg_install')}</button>`

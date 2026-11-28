@@ -15,8 +15,8 @@ int get_settings_sub_count(void) {
     switch (g_settings_subview) {
         case SETTINGS_VIEW_CATEGORIES: return 6;
         case SETTINGS_VIEW_ACTIVITIES: return 4;
-        case SETTINGS_VIEW_DISPLAY:    return 7;
-        case SETTINGS_VIEW_TOUCH:      return 4;
+        case SETTINGS_VIEW_DISPLAY:    return 8;
+        case SETTINGS_VIEW_TOUCH:      return 5;
         case SETTINGS_VIEW_POWER:      return 5;
         case SETTINGS_VIEW_SYSTEM:     return 3;
         case SETTINGS_VIEW_UPDATE:     return 2;
@@ -41,8 +41,9 @@ int get_settings_sub_count(void) {
 #define SETTINGS_UPDATE_GAP   5
 
 static void settings_list_rows(int count, int *card_h, int *spacing) {
-    *card_h = (count >= 7) ? 30 : ((count >= 6) ? 34 : 36);
-    *spacing = (count >= 7) ? 3 : ((count >= 6) ? 4 : 5);
+    /* 8 rows of 28 + 3 px still fit below SETTINGS_LIST_Y on the 320 px screen */
+    *card_h = (count >= 8) ? 28 : ((count >= 7) ? 30 : ((count >= 6) ? 34 : 36));
+    *spacing = (count >= 6) ? ((count >= 7) ? 3 : 4) : 5;
 }
 
 int settings_item_at(int y) {
@@ -402,9 +403,9 @@ void render_settings_screen(void) {
             break;
         }
         case SETTINGS_VIEW_DISPLAY: {
-            const char *labels[7] = { tr(STR_DISPLAY_BRIGHTNESS), tr(STR_DISPLAY_TIMEOUT), tr(STR_BTN_BACKLIGHT), tr(STR_NIGHT_START), tr(STR_NIGHT_END), tr(STR_DISPLAY_THEME), tr(STR_HOME_LAYOUT) };
+            const char *labels[8] = { tr(STR_DISPLAY_BRIGHTNESS), tr(STR_DISPLAY_TIMEOUT), tr(STR_BTN_BACKLIGHT), tr(STR_NIGHT_START), tr(STR_NIGHT_END), tr(STR_DISPLAY_THEME), tr(STR_HOME_LAYOUT), tr(STR_CLEAN_WAKE) };
             static const char *const layouts[HOME_LAYOUT_COUNT] = { "THEME", "LIST", "GRID", "CAROUSEL" };
-            char values[7][32];
+            char values[8][32];
             snprintf(values[0], sizeof(values[0]), "[ LVL %d ]", g_brightness_val);
             snprintf(values[1], sizeof(values[1]), "[ %ds ]", g_timeout_seconds);
             snprintf(values[2], sizeof(values[2]), "[ %s ]", g_btn_backlight_mode == 0 ? "OFF" : (g_btn_backlight_mode == 1 ? "ON" : "NIGHT"));
@@ -412,49 +413,57 @@ void render_settings_screen(void) {
             snprintf(values[4], sizeof(values[4]), "[ %02d:00 ]", g_night_end_hour);
             snprintf(values[5], sizeof(values[5]), "[ %s ]", g_theme.label);
             snprintf(values[6], sizeof(values[6]), "[ %s ]", g_physical_nav_enabled ? "LIST" : layouts[g_home_layout]);
-            uint16_t cols[7] = {
+            snprintf(values[7], sizeof(values[7]), "[ %s ]", g_clean_wake ? "ON" : "OFF");
+            uint16_t cols[8] = {
                 RGB_TEAL,
                 RGB_TEAL,
                 g_btn_backlight_mode == 0 ? RGB_RED : (g_btn_backlight_mode == 1 ? RGB_GREEN : RGB_YELLOW),
                 RGB_TEAL,
                 RGB_TEAL,
                 RGB_TEAL,
-                RGB_TEAL
+                RGB_TEAL,
+                g_clean_wake ? RGB_GREEN : RGB_TEAL
             };
-            const char *icons[7] = {
+            const char *icons[8] = {
                 "/opt/luadraws/appscommon/asset/hue/brightness.png",
                 "/opt/luadraws/appscommon/asset/commands/145.png",
                 "/opt/luadraws/appscommon/asset/juniperHomeAutomation/lamp_on.png",
                 "/opt/luadraws/appscommon/asset/clock_small.png",
                 "/opt/luadraws/appscommon/asset/clock_small.png",
                 "/opt/luadraws/appscommon/asset/hue/color.png",
-                "/opt/luadraws/appscommon/asset/footer/menu.png"
+                "/opt/luadraws/appscommon/asset/footer/menu.png",
+                "/opt/luadraws/appscommon/asset/battery/level100.png"
             };
-            render_settings_items(tr(STR_CAT_DISPLAY), 7, labels, values, cols, icons, g_selected_sub_item);
+            render_settings_items(tr(STR_CAT_DISPLAY), 8, labels, values, cols, icons, g_selected_sub_item);
             break;
         }
         case SETTINGS_VIEW_TOUCH: {
-            const char *labels[4] = { tr(STR_TOUCHSCREEN), tr(STR_CAP_BUTTONS), tr(STR_TOUCH_SENSITIVITY), tr(STR_PHYSICAL_NAV) };
-            char values[4][32];
+            const char *labels[5] = { tr(STR_TOUCHSCREEN), tr(STR_CAP_BUTTONS), tr(STR_TOUCH_SENSITIVITY), tr(STR_PHYSICAL_NAV),
+                                      tr(STR_HAPTIC_FEEDBACK) };
+            char values[5][32];
             snprintf(values[0], sizeof(values[0]), "[ %s ]", g_touch_enabled ? "ON" : "OFF");
             snprintf(values[1], sizeof(values[1]), "[ %s ]", g_cap_buttons_enabled ? "ON" : "OFF");
             const char *sens_names[] = { "", "LOW", "NORMAL", "HIGH" };
             int s_idx = (g_touch_sensitivity >= 1 && g_touch_sensitivity <= 3) ? g_touch_sensitivity : 2;
             snprintf(values[2], sizeof(values[2]), "[ %s ]", sens_names[s_idx]);
             snprintf(values[3], sizeof(values[3]), "[ %s ]", g_physical_nav_enabled ? "ON" : "OFF");
-            uint16_t cols[4] = {
+            if (g_haptic_ms > 0) snprintf(values[4], sizeof(values[4]), "[ %d ms ]", g_haptic_ms);
+            else snprintf(values[4], sizeof(values[4]), "[ OFF ]");
+            uint16_t cols[5] = {
                 g_touch_enabled ? RGB_GREEN : RGB_RED,
                 g_cap_buttons_enabled ? RGB_GREEN : RGB_RED,
                 RGB_TEAL,
-                g_physical_nav_enabled ? RGB_GREEN : RGB_RED
+                g_physical_nav_enabled ? RGB_GREEN : RGB_RED,
+                g_haptic_ms > 0 ? RGB_GREEN : RGB_RED
             };
-            const char *icons[4] = {
+            const char *icons[5] = {
                 "/opt/luadraws/appscommon/asset/gesture/hint.png",
                 "/opt/luadraws/appscommon/asset/footer/devices.png",
                 "/opt/luadraws/appscommon/asset/gesture/gesturehand.png",
-                "/opt/luadraws/appscommon/asset/edit/arrow.png"
+                "/opt/luadraws/appscommon/asset/edit/arrow.png",
+                "/opt/luadraws/appscommon/asset/footer/gesture_cue.png"
             };
-            render_settings_items(tr(STR_CAT_TOUCH), 4, labels, values, cols, icons, g_selected_sub_item);
+            render_settings_items(tr(STR_CAT_TOUCH), 5, labels, values, cols, icons, g_selected_sub_item);
             break;
         }
         case SETTINGS_VIEW_POWER: {

@@ -6,6 +6,16 @@ import { toast } from '../../components/toast.js';
 import { confirm } from '../../components/confirm.js';
 import { createModal } from '../../components/modal.js';
 
+/* a older than b (x.y.z, a leading v ignored) */
+function versionOlder(a, b) {
+  const parse = (v) => String(v).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  }
+  return false;
+}
+
 export function createView() {
   const container = h('div', { className: 'setup-subview-plugins', style: { display: 'flex', flexDirection: 'column', gap: '16px' } });
 
@@ -282,7 +292,8 @@ export function createView() {
     } else {
       marketplacePlugins.forEach(p => {
         const installed = installedPlugins.find(ip => ip.id === p.id);
-        const hasUpdate = installed && installed.version && p.version && (installed.version !== p.version);
+        // only a newer catalog release is an update, never an older one
+        const hasUpdate = installed && installed.version && p.version && versionOlder(installed.version, p.version);
 
         const cardItem = h('div', {
           className: 'card',
@@ -310,7 +321,16 @@ export function createView() {
               text: t('plg_view_docs', 'View Documentation / Source →')
             }),
           ]),
-          h('div', {}, [
+          // min_harmony_version above this Hub's: no install or update (the Hub refuses it too)
+          p.compatible === false ? h('div', {}, [
+            installed && h('span', { className: 'badge badge-success', style: { padding: '6px 12px' }, text: t('plg_installed_badge', 'Installed') }),
+            h('span', {
+              className: 'badge badge-warning',
+              style: { padding: '6px 12px' },
+              title: p.incompatible_reason || '',
+              text: t('plg_needs_version', 'Needs HarmonyNG {version}', { version: String(p.min_harmony_version || '').replace(/^v/, '') }),
+            }),
+          ]) : h('div', {}, [
             installed && !hasUpdate && h('span', { className: 'badge badge-success', style: { padding: '6px 12px' }, text: t('plg_installed_badge', 'Installed') }),
             hasUpdate && h('button', {
               className: 'btn btn-accent btn-sm',

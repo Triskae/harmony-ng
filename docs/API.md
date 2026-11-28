@@ -531,10 +531,26 @@ Returns running version, commit hash, build date, architecture, and whether an u
     "bt_version": "BTstack v1.5 (UART)",
     "arch": "mips (AR9344)",
     "update_available": false,
+    "ota_installable": true,
+    "release_url": "https://github.com/iranl/harmony-ng/releases/tag/v1.0.4",
+    "next_major_version": "",
+    "channel": "stable",
     "updating": false,
     "update_state": "idle"
   }
   ```
+  `ota_installable` is `false` when the release in `remote_version` is shown but not installed as
+  an online update: another major version (a new system: the release bundle installs it), or a
+  release published with `scripts/publish_ota.py --install-tool-only` (its `release.json` says so,
+  and its signed manifest has `"ota_installable": false`, which `update.sh apply` refuses).
+  Hubs on 3.0.0 or older do not read that flag and install such a release of their own major
+  version. `release_url` is the release's page on GitHub, for the notice; it is always built from
+  the version (`release.json` is not signed, and counts only when its `version` is the one found).
+  `next_major_version` is the next major release (v4, the Linux 6.18 system) when the v3 branch
+  names one in `VERSION_V4` (it has a branch of its own, `ota4`), else `""`: shown, and installed
+  with the release bundle only. `channel` is the update channel (`stable` or `beta`,
+  `POST /api/update-channel`).
+
   `update_state` is the state of the last `POST /api/update-apply` since the Hub started:
   - `running`: `update.sh apply` downloads and installs (`/tmp/hub_updating.flag` exists and the
     run started less than 30 minutes ago, counted on the uptime clock, which SNTP does not step).
@@ -580,9 +596,28 @@ Checks for newer release bundles (also answered as `/api/update-check-state`).
     "remote_version": "1.0.4",
     "message": "Hub binaries and WebUI are up to date (v1.0.4).",
     "has_update": false,
-    "update_available": false
+    "update_available": false,
+    "ota_installable": true,
+    "release_url": "https://github.com/iranl/harmony-ng/releases/tag/v1.0.4",
+    "next_major_version": "",
+    "channel": "stable"
   }
   ```
+  For a release that is not installed online (`ota_installable` false, see 2.1), `message` says
+  so and names `release_url`.
+
+#### `POST /api/update-channel`
+Chooses the releases the update check and the online update follow (admin):
+`{"channel": "stable"}` (the default: full releases, branch `ota`) or `{"channel": "beta"}` (the
+newer of branch `ota-beta`, the pre-releases and drafts, which are tested less, and branch `ota`).
+A pre-release of another major version on `ota-beta` is never followed (v3 has no beta; the
+v4 betas are there, and v4 itself is announced through `VERSION_V4`); the legacy web UI shows the channel select from v4 on. The channel applies to the
+default source only: a custom source is followed as it is. A change
+clears the stored latest version. Answers `{"ok": true, "channel": "beta"}`, or `400` for another
+value. A pre-release or draft published later as a full release goes to the stable channel
+unchanged (`.github/workflows/release-promote.yml`), unless `ota` holds the same or a newer
+release. Back on stable after installing a newer pre-release, the Hub stays on it (nothing older
+is offered) until a full release passes it.
 
 ### 2.3 Apply Update
 #### `POST /api/update-apply`
@@ -772,12 +807,14 @@ Deletes a device that nothing uses any more. References are not removed: while a
 `remote_slot6_map.json`, `bt_remote_map.json`) names the device, the delete is refused and nothing
 changes. Not counted, so a device never becomes impossible to delete: the map's own page for the
 device (`devices/<id>`, removed from the maps together with the device, so a new device given the
-same id starts without it), map sections of activities and pages of devices that no longer exist,
+same id starts without it), map sections of activities and pages of devices that no longer exist, key layers (`layers/<name>`:
+no editor shows them yet, so a device a layer binds can still be deleted; the binding then sends nothing),
 and the map of a touchscreen slot that has no remote: a slot counts when `hub_rf` reports it active
 (`GET /api/rf/status`, asked for at most 1.5 s), or, not active, when its
 `remote_slot<N>_version.json` still names a remote (`remote_id` or `skin`; an unpair clears both);
 when `hub_rf` does not answer, when that file exists. Any other slot does not count. Deleting an activity
-(`POST /api/activity-delete`) removes its sections (`activities/<id>`) from the three maps; a device
+(`POST /api/activity-delete`) removes its sections (`activities/<id>`) and its own key layer (`layers/<id>`, with those of
+activities deleted earlier, so a new activity given the id starts without them; named layers stay) from the maps; a device
 delete removes its page and pages of devices deleted earlier. Both only once the configuration in
 memory no longer has the activity or device. The maps are written compact (as the editors save
 them, so a large map stays under the 200000 bytes `GET /api/rf-mapping` reads), to a temporary
@@ -2019,6 +2056,77 @@ Returns physical button and screen mappings for the remote in the slot (1 to 6).
 Saves button assignments for the specified slot. The body must be one JSON object of less than 262144 bytes (256 KB): `400` otherwise, `413` when larger; the stored mapping is then kept.
 - **Query Parameter**: `slot` (`1` or `2`, defaults to `1`).
 
+#### Key layers: other keys within one activity
+A slot's mapping may hold a top-level `"layers"` object beside `"activities"`. A layer is a set of key bindings that, while
+it is on, come before the running activity's own: a key the layer binds uses the layer's binding, a key it leaves out
+keeps the activity's, and a key it binds to `{}` sends nothing. So a few keys can mean something else for a while,
+such as the arrows, OK and Back driving a TV's own menu during an activity that sends them to a set-top box.
+In an older mapping without an `"activities"` object, where the activities are the top-level entries, `"layers"` is
+not one of them, as `"devices"` is not.
+- **The activity's own layer** is `layers` → `<activity id>`. A key bound as
+  `{"action": "layer_toggle", "on": {"deviceId": "3", "command": "Green"}, "off": {"deviceId": "3", "command": "Blue"}}`
+  turns it on and sends `on`; pressed again, it turns the layer off and sends `off`. Held, it turns the layer over once:
+  the holds and the release send the command of the press. Bind it in the activity, not in the layer. With no activity
+  running the key sends nothing.
+- **A named layer** is `layers` → `<name>` (letters, digits, `_` and `-`, at most 23 characters, not digits only: those
+  are the activities' own), for any activity. It is turned on through `POST /api/rf/layer`. A `layer_toggle` key pressed while any layer is on turns it off and sends `off`.
+- **Off** (`PowerOffActivity`) stops the activity, once for a press however long it is held, unless the layer that is
+  on binds it: then it is that binding, for the press and for its holds (bound to `{}`, Off does nothing). This is for the remotes that send Off as a key, the
+  Companion and the Smart Control. A touchscreen remote (Elite, Ultimate) stops the activity itself when Off is
+  pressed and does not send the key, so a layer's Off binding never runs there.
+- **A key's holds and its release** send the command its press sent, also when the layer or the activity has changed
+  in between, so no device is left with a key held. A key whose press sent no command sends none while it is held
+  or when it is released, and a key that starts an activity starts it once, however long it is held. A hold or a
+  release that comes 2 s or more after the key's last press or hold is no longer that press's (its release was lost,
+  and the press of this frame too): it is looked up as the key is bound then. A hold whose press was lost is taken
+  for the press: it acts once, and the holds after it are its own.
+- A layer belongs to the run of the activity it was turned on in: every slot's layer goes off when the Hub begins a
+  switch, to another activity or to none (a stop). Asking again for the activity that runs (or a stop while off) is
+  no switch: nothing is sent, and a layer that is on stays. The daemon counts the switches it
+  begins in `/tmp/activity_switches`, and `hub_rf` checks that count at every key and every read, so a layer turned
+  on after a switch stays on until the next one. While an activity is being started or stopped no layer comes on: a
+  `layer_toggle` key then sends nothing, unless a layer is still on, which it turns off. A Help re-send of the running
+  activity is no switch: a layer comes on during it, and one that is on stays. It is kept in memory only, so it is off
+  after `hub_rf` restarts.
+```json
+{
+  "activities": {
+    "1": {
+      "DirectionUp": {"action": "device_cmd", "deviceId": "2", "command": "DirectionUp"},
+      "Guide": {"action": "layer_toggle", "on": {"deviceId": "3", "command": "Green"}, "off": {"deviceId": "3", "command": "Blue"}}
+    }
+  },
+  "layers": {
+    "1": {"DirectionUp": {"action": "device_cmd", "deviceId": "3", "command": "DirectionUp"}},
+    "amp": {
+      "DirectionUp": {"action": "device_cmd", "deviceId": "1", "command": "DirectionUp"},
+      "PowerOffActivity": {"action": "device_cmd", "deviceId": "1", "command": "PowerToggle"},
+      "Dvr": {}
+    }
+  }
+}
+```
+
+#### `GET /api/rf/layer` or `POST /api/rf/layer?slot={1..6}&on={0|1}[&name={layer}]`
+Reads every slot's key layer, or sets one without sending any key. Open to the `user` role (11.5), as a key press is;
+`HEAD` is not routed.
+- **Query Parameters** (POST; `GET` takes none): `slot` (1 to 6), `on` (`1` on, `0` off), `name` (optional: a named
+  layer; left out or empty, the running activity's own). Each may come in a JSON body instead (`{"slot": 1, "on": 1}`;
+  `on` also `true`/`false`); the query wins. `on=1` with no activity running, or while one is being
+  started or stopped, leaves the layer off (a Help re-send of the running activity is no start). `on=0` with a `name` turns off that layer only: when another layer is on, or none, nothing
+  changes (still `200`); `on=0` without a `name` turns off whatever layer is on. A `name` the slot's mapping lacks is
+  a `400` with either.
+- **Response `200 OK`** (both methods): each slot's state; `activity` is the activity the layer was turned on in and
+  `name` its name, both `""` when it is off or the activity's own.
+  ```json
+  {"ok": true, "slots": [{"slot": 1, "on": false, "activity": "", "name": ""},
+                         {"slot": 2, "on": true, "activity": "1", "name": "amp"}]}
+  ```
+  The list has an entry for each of the 6 slots.
+- **Response `400`** (POST): no `slot` or one outside 1 to 6 (`0` and `all` too), no `on` or one other than `0` or `1`, or a name that has
+  other characters, is digits only, or is not a layer of the slot's mapping. Nothing is changed; the body is the same,
+  with `"ok": false`.
+
 #### `POST /api/rf-mapping-copy?from={1..6}&to={1..6}`
 Copies entire button mapping configuration from one remote slot to another.
 - **Query Parameters**: `from` (source slot, 1 to 6, default 1), `to` (destination slot, 1 to 6, default 2). Both may also be given in a JSON body (`{"from": 1, "to": 2}`), which wins over the query.
@@ -3074,8 +3182,8 @@ With authentication on, each request is checked before its route runs:
 
   | Method | Paths |
   | --- | --- |
-  | `GET`, `HEAD` | `/api/status`, `/api/auth/me`, `/api/activities`, `/api/activity`, `/api/current_activity`, `/api/devices`, `/api/inventory`, `/api/icons`, `/api/icons/...`, `/api/icons/archive`, `/api/custom-icons`, `/api/ui-remote-layout`, `/assets/...` |
-  | `POST` | `/api/auth/logout`, `/api/activity`, `/api/activity-start`, `/api/activity-stop`, `/api/poweroff`, `/api/activity-cancel`, `/api/ir-send`, `/ir/send`, `/api/ir-raw`, `/api/button-press`, `/api/mqtt-publish`, `/api/bt-key`, `/api/bt-text`, `/api/bt-mouse`, `/api/v1/bt/mouse` |
+  | `GET`, `HEAD` | `/api/status`, `/api/auth/me`, `/api/activities`, `/api/activity`, `/api/current_activity`, `/api/devices`, `/api/inventory`, `/api/icons`, `/api/icons/...`, `/api/icons/archive`, `/api/custom-icons`, `/api/ui-remote-layout`, `/api/rf/layer` (`GET` only), `/assets/...` |
+  | `POST` | `/api/auth/logout`, `/api/activity`, `/api/activity-start`, `/api/activity-stop`, `/api/poweroff`, `/api/activity-cancel`, `/api/ir-send`, `/ir/send`, `/api/ir-raw`, `/api/button-press`, `/api/mqtt-publish`, `/api/bt-key`, `/api/bt-text`, `/api/bt-mouse`, `/api/v1/bt/mouse`, `/api/rf/layer` |
 
   `/api/bt-key` and `/api/bt-text` are not REST routes: the two entries only decide whether a
   `user` may send the WebSocket `bt_key` and `bt_text` actions.

@@ -148,8 +148,8 @@ and from then on 300 s before the next one.
   `/tmp/last_kmsg.log`; with Debug Logging on both go to `/data` instead. Everything in `/tmp` is
   lost at a reboot (see the flight recorder below).
 - **Files in `/data`**: `remote_settings.conf` (the settings, one `key=value` per line: `touch`,
-  `physical_nav`, `cap_buttons`, `touch_sens`, `gyro`, `deep_standby` (`-1` at once,
-  `0` never, or 15, 30, 60, 120, 240 minutes), `btn_backlight`, `night_start`, `night_end`,
+  `physical_nav`, `cap_buttons`, `haptic` (vibration length in ms, `0` off), `touch_sens`, `gyro`, `deep_standby` (`-1` at once,
+  `0` never, or 15, 30, 60, 120, 240 minutes), `btn_backlight`, `clean_wake`, `night_start`, `night_end`,
   `timeout`, `brightness`, `no_screen`, `log_level`, `debug_logging`, `confirm_act`, `slot`,
   `language`, `theme`, `layout` (`theme`, `list`, `grid`, `carousel`), `order` (`yours`, `used`),
   `tz`), `remote_rf_config.json` (the config the Hub pushed), `remote_activity_usage.conf` (for
@@ -356,7 +356,7 @@ The remote's settings menu has six categories (`payload/source/remote/remote_ui_
 [SETTINGS]
   ├── 1. CONFIG          --> Confirm switch, language, sync config from Hub, activity order
   ├── 2. DISPLAY         --> Brightness, timeout, button backlight, night start and end, theme, home layout
-  ├── 3. TOUCH           --> Touchscreen, capacitive buttons, sensitivity, physical button nav
+  ├── 3. TOUCH           --> Touchscreen, capacitive buttons, sensitivity, physical button nav, vibration
   ├── 4. POWER           --> Tilt / pickup wake, gyroscope rate, deep standby, battery, debug logging, suspend
   ├── 5. SYSTEM          --> RF pairing & link, reboot, factory reset
   └── 6. FIRMWARE UPDATE --> Pull firmware OTA from Hub, check for updates
@@ -380,6 +380,9 @@ Pages have no Back item: swipe left to right, or press `Back`, to return to the 
 - **`Night Starts`**, **`Night Ends`**: `[ HH:00 ]`, one hour per tap. The window of the `NIGHT` backlight.
 - **`Theme`**: cycles through Classic and the installed themes.
 - **`Home Layout`**: `[ THEME ]` (the theme's layout), `[ LIST ]`, `[ GRID ]` or `[ CAROUSEL ]` (one activity per page, dragged sideways). Shows `[ LIST ]` while Physical Button Nav is on.
+- **`Clean Wake`**: `[ OFF ]` (default) or `[ ON ]`. Whether the screen wakes without a flash of static; takes effect from the next blank.
+  - `OFF`: the blank switches off the backlight and powers the panel down (`FB_BLANK_POWERDOWN`), the lowest draw while the screen is off ([REMOTE_BATTERY_OPTIMIZATION.md](REMOTE_BATTERY_OPTIMIZATION.md)). At the wake the kernel initialises the panel again and lights the backlight while it still shows noise: a short flash of static before the first frame.
+  - `ON`: the blank switches off the backlight only. The wake is clean, but the display controller keeps running while the screen is off, until a deep standby suspends the remote. With Deep Standby `[ AT ONCE ]` on battery that is about 2 s; on the cradle or USB the remote does not run on its battery.
 
 ### 3. `TOUCH`
 - **`Touchscreen`**: `[ ON ]` or `[ OFF ]`.
@@ -387,6 +390,7 @@ Pages have no Back item: swipe left to right, or press `Back`, to return to the 
 - **`Capacitive Buttons`**: `[ ON ]` or `[ OFF ]`: the two touch keys below the display.
 - **`Touch Sensitivity`**: `[ LOW ]`, `[ NORMAL ]`, `[ HIGH ]`. Adjusts tap slop tolerances and swipe thresholds.
 - **`Physical Button Nav`**: `[ ON ]` or `[ OFF ]`: drive the screen with the physical keys (see "Physical Button Navigation").
+- **`Vibration`**: `[ OFF ]` (default), `[ 20 ms ]`, `[ 40 ms ]` or `[ 80 ms ]`; each tap on the row steps to the next length and gives one pulse of it. A pulse of the vibration motor when an on-screen button sends a command (an activity, a command of a device or of the running activity) and on the two capacitive keys below the display; menus, swipes and the hard keys give none. The remote has a TI DRV2605 driving an LRA motor: `remote_ui` writes the driver's timed command to `/dev/drv2605` (`03`, then the length in ms, little endian), which returns at once.
 
 ### 4. `POWER`
 - **`Tilt / Pickup Wake`**: `[ ON ]` or `[ OFF ]`. LIS3DH lift-to-wake while the screen is off. The

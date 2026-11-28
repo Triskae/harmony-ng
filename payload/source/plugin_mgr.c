@@ -6,6 +6,7 @@
 #include "cmd_ir_alt.h"
 #include "cJSON.h"
 #include "sha256.h"
+#include "harmony_version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1197,6 +1198,68 @@ cJSON *plugin_mgr_get_installed_json(void) {
     return arr;
 }
 
+/* The plugin's "min_harmony_version" (manifest or repository entry, optional): 0 when this
+ * HarmonyNG is that version or newer (or no minimum is set), else -1 with the reason. A minimum
+ * that is not a version string (digits and dots) is refused: a typo must not remove it. */
+int plugin_mgr_version_ok(const cJSON *entry, char *err_msg, size_t err_msg_sz) {
+    const cJSON *mv = cJSON_GetObjectItemCaseSensitive(entry, "min_harmony_version");
+    if (!mv) return 0;
+    const char *want = cJSON_IsString(mv) ? mv->valuestring : "";
+    if (want[0] == 'v' || want[0] == 'V') want++;
+    if (!want[0] || !isdigit((unsigned char)want[0]) || strspn(want, "0123456789.") != strlen(want)) {
+        if (err_msg) snprintf(err_msg, err_msg_sz, "Manifest has an invalid min_harmony_version");
+        return -1;
+    }
+    if (harmony_version_compare(HARMONY_VERSION, want) >= 0) return 0;
+    if (err_msg) snprintf(err_msg, err_msg_sz, "This plugin needs HarmonyNG %.20s or newer (this Hub runs %s)", want,
+                          HARMONY_VERSION);
+    return -1;
+}
+
+/* A release block of a repository entry: {"version", "download_url", "sha256"[, "min_harmony_version"]} */
+static int release_block_ok(const cJSON *r) {
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(r, "version");
+    const cJSON *u = cJSON_GetObjectItemCaseSensitive(r, "download_url");
+    const cJSON *h = cJSON_GetObjectItemCaseSensitive(r, "sha256");
+    return cJSON_IsObject(r) && cJSON_IsString(v) && cJSON_IsString(u) && is_safe_url(u->valuestring) &&
+           cJSON_IsString(h) && strlen(h->valuestring) == 64 && plugin_mgr_version_ok(r, NULL, 0) == 0;
+}
+
+/* The top level of a repository entry is the release every Hub can run: Hubs that do not know
+ * "next" (3.0.0 and older) read only that. "next" (one release block or a list of them,
+ * scripts/gen_repository.py of the plugin repository writes it when a release raises
+ * min_harmony_version) holds the releases that need a newer HarmonyNG. The newest one this Hub
+ * meets stands in for the entry everywhere (marketplace, install and pull by id) when it is newer
+ * than the top level, or when the top level itself is not for this Hub. */
+static void apply_next_release(cJSON *e) {
+    const cJSON *nx = cJSON_GetObjectItemCaseSensitive(e, "next");
+    const cJSON *best = NULL;
+    if (cJSON_IsObject(nx)) {
+        if (release_block_ok(nx)) best = nx;
+    } else if (cJSON_IsArray(nx)) {
+        const cJSON *r = NULL;
+        cJSON_ArrayForEach(r, nx) {
+            if (release_block_ok(r) && (!best || harmony_version_compare(
+                    cJSON_GetObjectItemCaseSensitive(r, "version")->valuestring,
+                    cJSON_GetObjectItemCaseSensitive(best, "version")->valuestring) > 0))
+                best = r;
+        }
+    }
+    const cJSON *cur = cJSON_GetObjectItemCaseSensitive(e, "version");
+    if (best && (plugin_mgr_version_ok(e, NULL, 0) != 0 || !cJSON_IsString(cur) ||
+                 harmony_version_compare(cJSON_GetObjectItemCaseSensitive(best, "version")->valuestring,
+                                         cur->valuestring) > 0)) {
+        const char *keys[] = {"version", "download_url", "sha256", "min_harmony_version"};
+        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+            const cJSON *src = cJSON_GetObjectItemCaseSensitive(best, keys[i]);
+            cJSON *copy = cJSON_IsString(src) ? cJSON_CreateString(src->valuestring) : NULL;
+            cJSON_DeleteItemFromObjectCaseSensitive(e, keys[i]);
+            if (copy) cJSON_AddItemToObject(e, keys[i], copy);
+        }
+    }
+    cJSON_DeleteItemFromObjectCaseSensitive(e, "next");
+}
+
 /* What the Hub needs from a manifest before it installs it */
 static int validate_manifest(const cJSON *m, const char *src_dir, char *err_msg, size_t err_msg_sz) {
     const cJSON *j_id = cJSON_GetObjectItemCaseSensitive(m, "id");
@@ -1209,6 +1272,7 @@ static int validate_manifest(const cJSON *m, const char *src_dir, char *err_msg,
         if (err_msg) snprintf(err_msg, err_msg_sz, "Manifest missing version");
         return -1;
     }
+    if (plugin_mgr_version_ok(m, err_msg, err_msg_sz) != 0) return -1;
     const cJSON *j_ep = cJSON_GetObjectItemCaseSensitive(m, "entrypoint");
     if (!cJSON_IsString(j_ep) || !is_safe_rel_path(j_ep->valuestring)) {
         if (err_msg) snprintf(err_msg, err_msg_sz, "Manifest missing a valid entrypoint (relative path)");
@@ -1887,6 +1951,7 @@ cJSON *plugin_mgr_get_marketplace_catalog(int force_reload) {
                             /* the repository it was read from, never one the entry names */
                             cJSON_DeleteItemFromObjectCaseSensitive(e, "repository");
                             cJSON_AddStringToObject(e, "repository", repo_url->valuestring);
+                            apply_next_release(e);
                             cJSON_AddItemToArray(catalog, e);
                         }
                     }

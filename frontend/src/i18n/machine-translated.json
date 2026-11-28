@@ -646,6 +646,7 @@
     "plg_confirm_running",
     "plg_confirm_timeout",
     "plg_ir_alt_title",
+    "plg_needs_version",
     "step_press_mode",
     "step_press_tap",
     "step_press_hold",
@@ -1296,7 +1297,8 @@
     "plg_verify_code",
     "plg_confirm_running",
     "plg_confirm_timeout",
-    "plg_ir_alt_title"
+    "plg_ir_alt_title",
+    "plg_needs_version"
   ],
   "nl": [
     "map_action_help",
@@ -1944,6 +1946,7 @@
     "plg_confirm_running",
     "plg_confirm_timeout",
     "plg_ir_alt_title",
+    "plg_needs_version",
     "step_press_mode",
     "step_press_tap",
     "step_press_hold",
@@ -2595,6 +2598,7 @@
     "plg_confirm_running",
     "plg_confirm_timeout",
     "plg_ir_alt_title",
+    "plg_needs_version",
     "step_press_mode",
     "step_press_tap",
     "step_press_hold",
@@ -3246,6 +3250,7 @@
     "plg_confirm_running",
     "plg_confirm_timeout",
     "plg_ir_alt_title",
+    "plg_needs_version",
     "step_press_mode",
     "step_press_tap",
     "step_press_hold",

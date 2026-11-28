@@ -62,7 +62,8 @@ CFLAGS="$CFLAGS -DHUB_BUILD_DATE_UTC=$(date -u +%Y%m%d)"
 
 TARGET="${1:-all}"
 
-# BearSSL (build/fetch_bearssl.sh pins the commit) is on the Hub once: payload/lib/libbearssl.so.0,
+# BearSSL (build/fetch_bearssl.sh pins the commit; sources in build/vendor/bearssl, no download)
+# is on the Hub once: payload/lib/libbearssl.so.0,
 # trimmed to the functions in build/bearssl_exports.txt. hub_fetch (the Hub's only TLS client) and
 # the plugins link it (-l:libbearssl.so.0, started with LD_LIBRARY_PATH=/data/harmony/lib: the
 # stock ld-uClibc ignores rpath). The static core binaries carry no TLS (hub_daemon runs hub_fetch).
@@ -88,19 +89,20 @@ check_stock_libc() {
 
 build_bearssl() {
     BEARSSL_DIR="$BEARSSL_DIR" sh "$SCRIPT_DIR/fetch_bearssl.sh"
-    stamp="$(git -C "$BEARSSL_DIR" rev-parse HEAD) $CC $BEARSSL_SONAME $(md5sum < "$BEARSSL_EXPORTS" | cut -c1-32) 2"
+    bearssl_commit=$(cat "$BEARSSL_DIR/.bearssl_commit")
+    stamp="$bearssl_commit $CC $BEARSSL_SONAME $(md5sum < "$BEARSSL_EXPORTS" | cut -c1-32) 2"
     if [ -f "$LIB/$BEARSSL_SONAME" ] && [ "$(cat "$BEARSSL_OUT/stamp" 2>/dev/null)" = "$stamp" ]; then
         return 0
     fi
     echo "[-] Building BearSSL..."
     mkdir -p "$BEARSSL_OUT/pic" "$LIB"
     # the objects only depend on the commit and compiler (one gcc call: far faster than one per file)
-    if [ "$(cat "$BEARSSL_OUT/pic/stamp" 2>/dev/null)" != "$(git -C "$BEARSSL_DIR" rev-parse HEAD) $CC" ]; then
+    if [ "$(cat "$BEARSSL_OUT/pic/stamp" 2>/dev/null)" != "$bearssl_commit $CC" ]; then
         rm -f "$BEARSSL_OUT"/pic/*
         C_FILES=$(cd "$BEARSSL_DIR" && find src -name '*.c' ! -name 'brssl.c' ! -name 'test_*.c' | sort | sed "s|^|$BEARSSL_DIR/|")
         (cd "$BEARSSL_OUT/pic" && "$CC" -Os -Wall -fPIC -ffunction-sections -fdata-sections \
             -I"$BEARSSL_DIR/inc" -I"$BEARSSL_DIR/src" -c $C_FILES)
-        echo "$(git -C "$BEARSSL_DIR" rev-parse HEAD) $CC" > "$BEARSSL_OUT/pic/stamp"
+        echo "$bearssl_commit $CC" > "$BEARSSL_OUT/pic/stamp"
     fi
     # only the listed names are exported; what they do not reach is dropped
     { echo "{ global:"; grep -v '^#' "$BEARSSL_EXPORTS" | sed '/^$/d; s/$/;/'; echo "local: *; };"; } > "$BEARSSL_OUT/exports.map"

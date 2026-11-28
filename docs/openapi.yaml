@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Harmony Hub Control API
-  version: 3.0.0
+  version: 3.1.0
   description: |
     REST and WebSocket API for the open-source **Harmony Hub** firmware and **Harmony remote** RF daemon.
     
@@ -1800,7 +1800,8 @@ paths:
         - Activities
       summary: Delete activity
       description: >-
-        Also removes the activity's sections (activities/<id>) from remote_slot1_map.json to
+        Also removes the activity's sections (activities/<id>) and its own key layer (layers/<id>,
+        with those of activities deleted earlier; named layers stay) from remote_slot1_map.json to
         remote_slot6_map.json and bt_remote_map.json.
       requestBody:
         required: true
@@ -3375,6 +3376,71 @@ paths:
         '500':
           description: The settings were sent to the remote but could not be saved on the Hub
 
+  /api/rf/layer:
+    get:
+      tags:
+        - RF & Remote
+      summary: Read every remote slot's key layer
+      responses:
+        '200':
+          description: Each slot's key layer
+          content:
+            application/json:
+              example:
+                ok: true
+                slots:
+                  - slot: 1
+                    'on': false
+                    activity: ''
+                    name: ''
+    post:
+      tags:
+        - RF & Remote
+      summary: Turn a remote slot's key layer on or off, without sending a key
+      description: The parameters may come in a JSON body instead ({"slot":1,"on":1,"name":"amp"}, on also true/false); the query wins. With no activity running, or while one is being started or stopped, on=1 leaves the layer off (a Help re-send of the running activity is no start). on=0 with a name turns off that layer only (nothing changes when another layer is on), on=0 without one whatever layer is on.
+      parameters:
+        - name: slot
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 6
+        - name: 'on'
+          in: query
+          required: true
+          schema:
+            type: integer
+            enum: [0, 1]
+        - name: name
+          in: query
+          required: false
+          description: A named layer of the slot's mapping; left out, the running activity's own
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Each slot's key layer after the change
+          content:
+            application/json:
+              example:
+                ok: true
+                slots:
+                  - slot: 1
+                    'on': false
+                    activity: ''
+                    name: ''
+        '400':
+          description: No slot or one outside 1 to 6 (0 and all too), no 'on' or one other than 0 or 1, or a name with other characters than letters, digits, _ and -, of digits only, or not a layer of the slot's mapping. Nothing is changed; the body is each slot's key layer, with ok false.
+          content:
+            application/json:
+              example:
+                ok: false
+                slots:
+                  - slot: 1
+                    'on': false
+                    activity: ''
+                    name: ''
   /api/rf/push-config:
     get:
       tags:
@@ -3970,6 +4036,46 @@ paths:
                   update_error:
                     type: string
                     description: First error line of update.sh, the cause (failed only, untranslated)
+                  ota_installable:
+                    type: boolean
+                    description: false when remote_version is shown but installed with the release bundle only (another major version, or published so; docs/API.md 2.1)
+                  release_url:
+                    type: string
+                    description: The release page of remote_version on GitHub (built from the version)
+                  next_major_version:
+                    type: string
+                    description: The next major release named by VERSION_V4 on the v3 branch (release bundle only), else empty
+                  channel:
+                    type: string
+                    enum: [stable, beta]
+                    description: The update channel (POST /api/update-channel)
+
+  /api/update-channel:
+    post:
+      tags:
+        - Updates & Maintenance
+      summary: Choose the update channel
+      description: stable (full releases, branch ota) or beta (also pre-releases and drafts, branch ota-beta). Admin only.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel]
+              properties:
+                channel:
+                  type: string
+                  enum: [stable, beta]
+      responses:
+        '200':
+          description: Channel set
+          content:
+            application/json:
+              example:
+                ok: true
+                channel: beta
+        '400':
+          description: Not stable or beta
 
   /api/update-check:
     get:
@@ -3989,6 +4095,10 @@ paths:
                 message: Hub binaries and WebUI are up to date (v2.1.1).
                 has_update: false
                 update_available: false
+                ota_installable: true
+                release_url: "https://github.com/iranl/harmony-ng/releases/tag/v2.1.1"
+                next_major_version: ""
+                channel: stable
     post:
       tags:
         - Updates & Maintenance
@@ -4024,6 +4134,10 @@ paths:
                 message: Hub binaries and WebUI are up to date (v2.1.1).
                 has_update: false
                 update_available: false
+                ota_installable: true
+                release_url: "https://github.com/iranl/harmony-ng/releases/tag/v2.1.1"
+                next_major_version: ""
+                channel: stable
 
   /api/update-apply:
     post:

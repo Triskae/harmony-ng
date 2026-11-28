@@ -103,6 +103,7 @@ int g_selected_pair_opt = 0;
 bool g_touch_enabled = true;
 bool g_physical_nav_enabled = false;
 bool g_cap_buttons_enabled = true;
+int g_haptic_ms = 0;   /* the Vibration setting: pulse length in ms (0 off, 20, 40 or 80) */
 int g_touch_sensitivity = 2;   /* 1 = Low, 2 = Normal, 3 = High */
 uint64_t g_last_switch_completed_ms = 0;
 char g_last_switch_target_id[16] = "";
@@ -113,6 +114,7 @@ int g_act_trigger_count = 0;
 bool g_gyro_enabled = true;
 int g_deep_standby_min = -1;   /* -1 = at once (2 s after the screen blanks, as stock), 15, 30, 60, 120, 240, 0 = never */
 int g_btn_backlight_mode = 2;  /* 0 = OFF, 1 = ON, 2 = NIGHT_SCHEDULE */
+bool g_clean_wake = false;     /* keeps the panel powered while the screen is off (see fb_set_blank) */
 int g_night_start_hour = 22;   /* 10 PM */
 int g_night_end_hour = 7;      /* 7 AM */
 int g_timeout_seconds = 10;
@@ -288,7 +290,7 @@ int get_active_dev_cmd_count(void) {
     return count;
 }
 
-int get_active_dev_cmd_item(int filtered_idx, char *out_label, size_t label_len, uint8_t *out_btn_index, uint8_t *out_atype, char *out_icon, size_t icon_len) {
+int get_active_dev_cmd_item(int filtered_idx, char *out_label, size_t label_len, uint8_t *out_btn_index, uint8_t *out_atype, char *out_icon, size_t icon_len, uint16_t *out_icon_id) {
     if (!g_has_hub_config || g_rf_button_count == 0) {
         return -1;
     }
@@ -310,6 +312,7 @@ int get_active_dev_cmd_item(int filtered_idx, char *out_label, size_t label_len,
                     strncpy(out_icon, g_rf_buttons[i].icon_key, icon_len - 1);
                     out_icon[icon_len - 1] = '\0';
                 }
+                if (out_icon_id) *out_icon_id = g_rf_buttons[i].icon_id;
                 return 0;
             }
             cur++;

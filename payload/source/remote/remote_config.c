@@ -318,6 +318,23 @@ bool resolve_device_icon(uint16_t icon_id, const char *icon_key, const char *dev
     return (out_path[0] != '\0');
 }
 
+bool resolve_button_icon_id(uint16_t icon_id, char *out_path, size_t max_len) {
+    if (!out_path || max_len == 0) return false;
+    out_path[0] = '\0';
+    if (icon_id == 0) return false;
+    char test_path[128];
+    if (icon_id & 0x8000) {
+        snprintf(test_path, sizeof(test_path), "/data/assets/custom/%u.png", (unsigned int)icon_id);
+    } else {
+        const char *stock = get_stock_icon_path(icon_id);
+        if (!stock || !stock[0]) return false;
+        snprintf(test_path, sizeof(test_path), "%s", stock);
+    }
+    if (!fs_readable(test_path)) return false;
+    snprintf(out_path, max_len, "%s", test_path);
+    return true;
+}
+
 bool resolve_button_icon(const char *icon_key, const char *label, char *out_path, size_t max_len) {
     if (!out_path || max_len == 0) return false;
     out_path[0] = '\0';
@@ -589,6 +606,9 @@ void save_rf_config(void) {
         if (g_rf_buttons[i].icon_key[0]) {
             cJSON_AddStringToObject(b, "icon", g_rf_buttons[i].icon_key);
         }
+        if (g_rf_buttons[i].icon_id) {
+            cJSON_AddNumberToObject(b, "icon_id", g_rf_buttons[i].icon_id);
+        }
         cJSON_AddItemToArray(btns, b);
     }
 
@@ -773,6 +793,10 @@ void load_rf_config(void) {
                 } else {
                     g_rf_buttons[g_rf_button_count].icon_key[0] = '\0';
                 }
+                cJSON *jicid = cJSON_GetObjectItem(b, "icon_id");
+                g_rf_buttons[g_rf_button_count].icon_id =
+                    (jicid && cJSON_IsNumber(jicid) && jicid->valueint > 0 && jicid->valueint <= 0xFFFF)
+                        ? (uint16_t)jicid->valueint : 0;
                 add_act_trigger(&g_rf_buttons[g_rf_button_count]);
                 g_rf_button_count++;
             }
@@ -983,6 +1007,7 @@ void load_settings_conf(void) {
             if (strcmp(key, "touch") == 0) g_touch_enabled = (val != 0);
             else if (strcmp(key, "physical_nav") == 0 || strcmp(key, "screen_nav_mode") == 0) g_physical_nav_enabled = (val != 0);
             else if (strcmp(key, "cap_buttons") == 0 || strcmp(key, "capacitive_buttons") == 0) g_cap_buttons_enabled = (val != 0);
+            else if (strcmp(key, "haptic") == 0) g_haptic_ms = (val == 20 || val == 40 || val == 80) ? val : 0;
             else if (strcmp(key, "touch_sens") == 0) g_touch_sensitivity = (val >= 1 && val <= 3) ? val : 2;
             else if (strcmp(key, "gyro") == 0) g_gyro_enabled = (val != 0);
             else if (strcmp(key, "deep_standby") == 0 || strcmp(key, "deep_standby_min") == 0) {
@@ -991,6 +1016,7 @@ void load_settings_conf(void) {
                 }
             }
             else if (strcmp(key, "btn_backlight") == 0) g_btn_backlight_mode = (val >= 0 && val <= 2) ? val : 2;
+            else if (strcmp(key, "clean_wake") == 0) g_clean_wake = (val != 0);
             else if (strcmp(key, "night_start") == 0) g_night_start_hour = (val >= 0 && val <= 23) ? val : 22;
             else if (strcmp(key, "night_end") == 0) g_night_end_hour = (val >= 0 && val <= 23) ? val : 7;
             else if (strcmp(key, "timeout") == 0) g_timeout_seconds = val;
@@ -1047,10 +1073,12 @@ void save_settings_conf(void) {
         "touch=%d\n"
         "physical_nav=%d\n"
         "cap_buttons=%d\n"
+        "haptic=%d\n"
         "touch_sens=%d\n"
         "gyro=%d\n"
         "deep_standby=%d\n"
         "btn_backlight=%d\n"
+        "clean_wake=%d\n"
         "night_start=%d\n"
         "night_end=%d\n"
         "timeout=%d\n"
@@ -1071,10 +1099,12 @@ void save_settings_conf(void) {
         g_touch_enabled ? 1 : 0,
         g_physical_nav_enabled ? 1 : 0,
         g_cap_buttons_enabled ? 1 : 0,
+        g_haptic_ms,
         g_touch_sensitivity,
         g_gyro_enabled ? 1 : 0,
         g_deep_standby_min,
         g_btn_backlight_mode,
+        g_clean_wake ? 1 : 0,
         g_night_start_hour,
         g_night_end_hour,
         g_timeout_seconds,

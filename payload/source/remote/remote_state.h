@@ -44,6 +44,7 @@ extern "C" {
 #define BTN_EVENT_DEV           "/dev/input/event0"
 #define GYRO_EVENT_DEV          "/dev/input/event1"
 #define TOUCH_EVENT_DEV         "/dev/input/event2"
+#define HAPTIC_DEV              "/dev/drv2605"   /* the TI DRV2605 haptic driver */
 #define GYRO_DATA_RATE_SYS      "/sys/devices/platform/i2c_davinci.1/i2c-1/1-0019/data_rate"
 #define GYRO_INT1_THRESHOLD_SYS "/sys/devices/platform/i2c_davinci.1/i2c-1/1-0019/int1_threshold"
 #define GYRO_INT1_DURATION_SYS  "/sys/devices/platform/i2c_davinci.1/i2c-1/1-0019/int1_duration"
@@ -163,6 +164,7 @@ typedef struct {
     uint8_t action_type;  /* 1=device_cmd, 2=activity_start, 3=activity_stop */
     uint8_t btn_index;    /* index in activity screen_buttons */
     char icon_key[24];    /* optional icon key / function id / semantic name */
+    uint16_t icon_id;     /* RF_MSG_BUTTON_ICON: a stock icon id, or a custom one (0x8000 set); 0 = none */
 } rf_button_t;
 
 typedef struct {
@@ -291,6 +293,7 @@ extern int g_selected_pair_opt;
 extern bool g_touch_enabled;
 extern bool g_physical_nav_enabled;
 extern bool g_cap_buttons_enabled;
+extern int g_haptic_ms;
 extern int g_touch_sensitivity;
 extern uint64_t g_last_switch_completed_ms;
 extern char g_last_switch_target_id[16];
@@ -301,6 +304,7 @@ extern int g_act_trigger_count;
 extern bool g_gyro_enabled;
 extern int g_deep_standby_min;
 extern int g_btn_backlight_mode;
+extern bool g_clean_wake;
 extern int g_night_start_hour;
 extern int g_night_end_hour;
 extern int g_timeout_seconds;
@@ -410,7 +414,7 @@ void log_remote_debug(const char *fmt, ...) __attribute__((format(printf, 1, 2))
 #define log_power_debug log_remote_debug
 bool has_configured_activities(void);
 int get_active_dev_cmd_count(void);
-int get_active_dev_cmd_item(int filtered_idx, char *out_label, size_t label_len, uint8_t *out_btn_index, uint8_t *out_atype, char *out_icon, size_t icon_len);
+int get_active_dev_cmd_item(int filtered_idx, char *out_label, size_t label_len, uint8_t *out_btn_index, uint8_t *out_atype, char *out_icon, size_t icon_len, uint16_t *out_icon_id);
 
 #ifdef __cplusplus
 }
