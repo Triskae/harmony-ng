@@ -331,6 +331,65 @@ class PublishOta(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 publish_ota.promote_staging(tarball, t / "out")
 
+    def test_push_keeps_the_v4_pointer(self):
+        # release.yml and --promote push one commit built from the staging; the v4 release writes
+        # VERSION_V4 and v4/VERSION onto the v3 branch, and a later push must not drop them
+        with tempfile.TemporaryDirectory() as tmp:
+            t = pathlib.Path(tmp)
+            (t / "gitconfig").write_text("[user]\n\tname = t\n\temail = t@t\n")
+            env = {"GIT_CONFIG_GLOBAL": str(t / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
+            bare = t / "remote.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, env={**os.environ, **env})
+
+            def files(branch: str) -> dict:
+                names = subprocess.run(["git", "--git-dir", str(bare), "ls-tree", "-r", "--name-only", branch],
+                                       capture_output=True, text=True, check=True).stdout.split()
+                return {n: subprocess.run(["git", "--git-dir", str(bare), "show", f"{branch}:{n}"],
+                                          capture_output=True, text=True, check=True).stdout.strip() for n in names}
+
+            def staging(version: str, **extra: str) -> pathlib.Path:
+                d = t / f"st-{version}"
+                (d / "v2").mkdir(parents=True)
+                (d / "v2" / "VERSION").write_text(version + "\n")
+                for name, text in extra.items():
+                    (d / name).write_text(text)
+                return d
+
+            old = dict(os.environ)
+            os.environ.update(env)
+            try:
+                publish_ota.push_to_ota_branch(staging("3.9.0"), "3.9.0", remote_url=str(bare), branch="ota")
+                self.assertEqual(files("ota"), {"v2/VERSION": "3.9.0"}, "nothing to keep on a new branch")
+                # the pointer, as the v4 release writes it (a second commit on ota)
+                work = t / "work"
+                subprocess.run(["git", "clone", "-q", "--branch", "ota", str(bare), str(work)], check=True)
+                (work / "v4").mkdir()
+                (work / "v4" / "VERSION").write_text("4.0.0\n")
+                (work / "VERSION_V4").write_text("4.0.0\n")
+                subprocess.run(["git", "-C", str(work), "add", "."], check=True)
+                subprocess.run(["git", "-C", str(work), "commit", "-qm", "VERSION_V4: v4.0.0"], check=True)
+                subprocess.run(["git", "-C", str(work), "push", "-q", "origin", "ota"], check=True)
+                publish_ota.push_to_ota_branch(staging("3.9.1"), "3.9.1", remote_url=str(bare), branch="ota")
+                self.assertEqual(files("ota"), {"v2/VERSION": "3.9.1", "VERSION_V4": "4.0.0", "v4/VERSION": "4.0.0"})
+                n = subprocess.run(["git", "--git-dir", str(bare), "rev-list", "--count", "ota"],
+                                   capture_output=True, text=True, check=True).stdout.strip()
+                self.assertEqual(n, "1", "still one commit")
+                # a pointer in the staging itself wins
+                publish_ota.push_to_ota_branch(staging("3.9.2", VERSION_V4="4.1.0\n"), "3.9.2", remote_url=str(bare),
+                                               branch="ota")
+                self.assertEqual(files("ota")["VERSION_V4"], "4.1.0")
+                self.assertEqual(files("ota")["v4/VERSION"], "4.0.0")
+                # another branch has nothing of it
+                publish_ota.push_to_ota_branch(staging("3.10.0"), "3.10.0", remote_url=str(bare), branch="ota-beta")
+                self.assertEqual(files("ota-beta"), {"v2/VERSION": "3.10.0"})
+                # an unreachable remote stops before anything is pushed
+                with self.assertRaises(SystemExit):
+                    publish_ota.push_to_ota_branch(staging("3.10.1"), "3.10.1", remote_url=str(t / "missing"),
+                                                   branch="ota")
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
+
     def test_branch_version_of_a_remote(self):
         with tempfile.TemporaryDirectory() as tmp:
             t = pathlib.Path(tmp)
