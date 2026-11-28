@@ -250,6 +250,37 @@ pick_official_branch
         (self.root / "data/harmony/update_channel").unlink()
         self.assertEqual(self.run_sh(STABLE, "fetch-remote-ota", 'echo "$REPO"').strip(), BETA)
 
+    def test_one_failed_read_keeps_the_beta_branch(self):
+        (self.root / "data/harmony/update_channel").write_text("beta\n")
+        self.publish(STABLE, "3.5.0")
+        self.publish(BETA, "3.6.0")
+        # a v3 branch also has the plain VERSION of the 1.x Hubs: the second try must be v2/VERSION
+        (self.serve[BETA] / "VERSION").write_text("1.14.0\n")
+        for cmd, tail in (("check", "do_check"), ("apply", 'echo "$REPO|$PICKED_VER"')):
+            (self.root / "fail_once").write_text(f"{BETA}/v2/VERSION\n")
+            out = self.run_sh("", cmd, tail, real_fetch=True)
+            if cmd == "check":
+                self.assertEqual(json.loads(out.splitlines()[-1])["remote_version"], "3.6.0", out)
+                self.assertIn(f"source={BETA}", (self.root / "data/harmony/update_state.conf").read_text())
+            else:
+                self.assertEqual(out.strip(), f"{BETA}|3.6.0")
+        self.fetch_log("requests")
+        self.fetch_log("sleeps")
+        # cost on beta without ota-beta: v2/VERSION twice and the plain VERSION once, one wait
+        for f in list((self.serve[BETA]).rglob("*")):
+            if f.is_file():
+                f.unlink()
+        self.run_sh("", "apply", 'echo "$REPO"', real_fetch=True)
+        beta_reqs = [u for u in self.fetch_log("requests") if u.startswith(BETA + "/")]
+        self.assertEqual(beta_reqs, [f"{BETA}/v2/VERSION"] * 2 + [f"{BETA}/VERSION"])
+        self.assertEqual(len(self.fetch_log("sleeps")), 1)
+        # a branch that is only compared keeps one try of each file
+        self.publish(STABLE, "3.4.0")
+        self.assertEqual(self.run_sh("", "fetch-remote-ota", 'echo "$REPO"', real_fetch=True).strip(), STABLE)
+        beta_reqs = [u for u in self.fetch_log("requests") if u.startswith(BETA + "/")]
+        self.assertEqual(beta_reqs, [f"{BETA}/v2/VERSION", f"{BETA}/VERSION"])
+        self.assertEqual(self.fetch_log("sleeps"), [])
+
     def test_stable_channel_never_sees_beta(self):
         self.publish(STABLE, "3.4.0")
         self.publish(BETA, "3.6.0")
