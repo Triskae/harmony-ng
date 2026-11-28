@@ -154,6 +154,14 @@ await check.check('the next major version: banner once per version, dismissable,
   own.client.getUpdateStatus = async () => ({ current_version: '3.5.0', next_major_version: '4.1.0' });
   await own.checkBanners.call(app);
   assert.equal(banner.style.display, 'flex', 'a newer next major version shows again');
+  // a Hub on that major version already: VERSION_V4 is no "next major version" for it
+  try { localStorage.removeItem('hng_next_major_dismissed'); } catch (_) { }
+  banner.style.display = 'none';
+  own.onlineVersion = '4.0.0';
+  own.client.getUpdateStatus = async () => ({ current_version: '4.0.0', next_major_version: '4.1.0' });
+  await own.checkBanners.call(app);
+  assert.equal(banner.style.display, 'none', 'no banner for 4.1.0 on a 4.0.0 Hub');
+  assert.equal(document.getElementById('btnHubUpdateDismiss').style.display, 'none', 'no dismiss button');
 });
 
 check.finish();

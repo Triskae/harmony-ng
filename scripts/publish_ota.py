@@ -409,6 +409,31 @@ def sign_manifest(output_dir: Path, require: bool) -> bool:
     print("[+] manifest.json signed (manifest.json.sig)")
     return True
 
+# Files that other steps keep on a branch and that the single commit pushed below would drop: the
+# v4 pointer that the v4 release writes onto the v3 branch (VERSION_V4, v4/VERSION).
+CARRIED_FILES = ("VERSION_V4", "v4")
+
+
+def carry_branch_files(work: Path, remote_url: str, branch: str, staging_dir: Path) -> list:
+    """Check out CARRIED_FILES from the tip of the remote's branch into the git work tree `work`,
+    except those the staging holds itself. A missing branch, or a tip without them, carries
+    nothing; any other failure stops: the force push would drop them."""
+    ls = subprocess.run(["git", "ls-remote", "--heads", remote_url, branch], cwd=work, capture_output=True, text=True)
+    if ls.returncode != 0:
+        raise SystemExit(f"[-] Cannot read {branch} of the remote: {ls.stderr.strip()}")
+    if not ls.stdout.strip():
+        return []
+    subprocess.run(["git", "fetch", "-q", "--depth", "1", remote_url, branch], cwd=work, check=True)
+    carried = []
+    for name in CARRIED_FILES:
+        if (staging_dir / name).exists():
+            continue
+        if subprocess.run(["git", "cat-file", "-e", f"FETCH_HEAD:{name}"], cwd=work, capture_output=True).returncode == 0:
+            subprocess.run(["git", "checkout", "FETCH_HEAD", "--", name], cwd=work, check=True)
+            carried.append(name)
+    return carried
+
+
 def push_to_ota_branch(staging_dir: Path, version: str, remote_url: str = None, branch: str = "ota"):
     print(f"[*] Preparing git commit on single squashed branch '{branch}'...")
     import tempfile
@@ -421,6 +446,9 @@ def push_to_ota_branch(staging_dir: Path, version: str, remote_url: str = None, 
         # Configure author identity for newly initialized repo
         subprocess.run(["git", "config", "user.name", "github-actions[bot]"], cwd=tmp_path, check=True)
         subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], cwd=tmp_path, check=True)
+        if remote_url:
+            for name in carry_branch_files(tmp_path, remote_url, branch, staging_dir):
+                print(f"[*] {name} kept from {branch}")
         # Copy staging contents
         for item in staging_dir.iterdir():
             if item.is_dir():

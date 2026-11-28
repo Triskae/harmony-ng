@@ -1,9 +1,13 @@
 #!/bin/sh
 # Build downloads are checked against a SHA-256 before use.
 # build/build_busybox.sh runs from a scratch copy of the repository layout with a fake curl
-# first in PATH (no network): a download that does not match, or an HTTP error page saved by
-# an earlier run, must stop the build and leave no tarball under the final name. The CI and
-# release workflows must check every Bootlin toolchain tarball with sha256sum.
+# first in PATH (no network). By default it uses the tarball in build/vendor and never downloads:
+# a missing or changed copy stops the build. With BUSYBOX_FETCH=1 a download that does not match,
+# or an HTTP error page saved by an earlier run, must stop the build and leave no tarball under
+# the final name. No workflow or build script names bearssl.org or busybox.net outside the two
+# opt-in downloads. The CI and
+# release workflows must check every Bootlin toolchain tarball with sha256sum. BearSSL is prepared
+# from build/vendor/bearssl with no network, and that copy is the pinned upstream tree.
 set -eu
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
@@ -21,8 +25,28 @@ FAKE
 chmod +x "$WORK/bin/curl"
 TAR="$WORK/repo/build/tmp/busybox-1.36.1.tar.bz2"
 
-# 1. A download that does not match its SHA-256
+# 0. Default: the vendored tarball, never curl. Missing, then changed: both stop the build.
+VENDOR_TAR="$WORK/repo/build/vendor/busybox-1.36.1.tar.bz2"
+: > "$WORK/log"
 if PATH="$WORK/bin:$PATH" FAKE_LOG="$WORK/log" bash "$WORK/repo/build/build_busybox.sh" mips >"$WORK/out" 2>&1; then
+    echo "FAIL: no vendored BusyBox tarball did not stop the build"; exit 1
+fi
+grep -q 'BUSYBOX_FETCH=1' "$WORK/out" || { echo "FAIL: no word about BUSYBOX_FETCH"; cat "$WORK/out"; exit 1; }
+mkdir -p "$WORK/repo/build/vendor"
+printf 'not a tarball\n' > "$VENDOR_TAR"
+if PATH="$WORK/bin:$PATH" FAKE_LOG="$WORK/log" bash "$WORK/repo/build/build_busybox.sh" mips >"$WORK/out" 2>&1; then
+    echo "FAIL: a changed vendored BusyBox tarball was used"; exit 1
+fi
+grep -q 'SHA-256' "$WORK/out" || { echo "FAIL: no word about the checksum"; cat "$WORK/out"; exit 1; }
+[ ! -s "$WORK/log" ] || { echo "FAIL: build_busybox.sh downloaded without BUSYBOX_FETCH=1:"; cat "$WORK/log"; exit 1; }
+rm -f "$VENDOR_TAR"
+# the copy in the repository is the published tarball
+sha=$(sed -n 's/^BB_SHA256="\([0-9a-f]*\)"$/\1/p' "$REPO_ROOT/build/build_busybox.sh")
+echo "$sha  $REPO_ROOT/build/vendor/busybox-1.36.1.tar.bz2" | sha256sum -c - >/dev/null 2>&1 \
+    || { echo "FAIL: build/vendor/busybox-1.36.1.tar.bz2 does not match SHA-256 $sha"; exit 1; }
+
+# 1. A download (BUSYBOX_FETCH=1) that does not match its SHA-256
+if PATH="$WORK/bin:$PATH" FAKE_LOG="$WORK/log" BUSYBOX_FETCH=1 bash "$WORK/repo/build/build_busybox.sh" mips >"$WORK/out" 2>&1; then
     echo "FAIL: a download with the wrong SHA-256 did not stop the build"; exit 1
 fi
 [ ! -e "$TAR" ] || { echo "FAIL: the bad download was kept as $TAR"; exit 1; }
@@ -31,7 +55,7 @@ grep -q 'SHA-256' "$WORK/out" || { echo "FAIL: no word about the checksum"; cat 
 # 2. An error page cached by an earlier run is not used: it is fetched again (and refused)
 printf '<html>error</html>\n' > "$TAR"
 : > "$WORK/log"
-if PATH="$WORK/bin:$PATH" FAKE_LOG="$WORK/log" bash "$WORK/repo/build/build_busybox.sh" mips >"$WORK/out" 2>&1; then
+if PATH="$WORK/bin:$PATH" FAKE_LOG="$WORK/log" BUSYBOX_FETCH=1 bash "$WORK/repo/build/build_busybox.sh" mips >"$WORK/out" 2>&1; then
     echo "FAIL: a cached file with the wrong SHA-256 was used"; exit 1
 fi
 grep -q '^curl ' "$WORK/log" || { echo "FAIL: the bad cached file was not fetched again"; exit 1; }
@@ -47,4 +71,46 @@ for wf in "$REPO_ROOT/.github/workflows/ci.yml" "$REPO_ROOT/.github/workflows/re
     fi
 done
 
-echo "PASS: build downloads are checked against their SHA-256"
+# 4. BearSSL comes from the vendored copy: no git, no curl (both fail and log if called)
+mkdir -p "$WORK/nonet"
+for tool in git curl wget; do
+    printf '#!/bin/sh\necho "%s $*" >> "$NONET_LOG"\nexit 1\n' "$tool" > "$WORK/nonet/$tool"
+    chmod +x "$WORK/nonet/$tool"
+done
+: > "$WORK/nonet.log"
+BEARSSL_COMMIT=$(sed -n 's/^BEARSSL_COMMIT="\([0-9a-f]*\)"$/\1/p' "$REPO_ROOT/build/fetch_bearssl.sh")
+for run in 1 2; do
+    PATH="$WORK/nonet:$PATH" NONET_LOG="$WORK/nonet.log" BEARSSL_DIR="$WORK/bearssl" \
+        sh "$REPO_ROOT/build/fetch_bearssl.sh" >"$WORK/out" 2>&1 \
+        || { echo "FAIL: fetch_bearssl.sh run $run without network"; cat "$WORK/out"; exit 1; }
+done
+[ ! -s "$WORK/nonet.log" ] || { echo "FAIL: fetch_bearssl.sh reached for the network:"; cat "$WORK/nonet.log"; exit 1; }
+[ -f "$WORK/bearssl/inc/bearssl.h" ] || { echo "FAIL: no BearSSL sources in BEARSSL_DIR"; exit 1; }
+[ "$(cat "$WORK/bearssl/.bearssl_commit")" = "$BEARSSL_COMMIT" ] || { echo "FAIL: wrong .bearssl_commit"; exit 1; }
+# without the vendored copy it stops, and still does not download
+mkdir -p "$WORK/novendor/build"
+cp "$REPO_ROOT/build/fetch_bearssl.sh" "$WORK/novendor/build/"
+if PATH="$WORK/nonet:$PATH" NONET_LOG="$WORK/nonet.log" sh "$WORK/novendor/build/fetch_bearssl.sh" >"$WORK/out" 2>&1; then
+    echo "FAIL: fetch_bearssl.sh without build/vendor/bearssl did not stop"; exit 1
+fi
+grep -q 'BEARSSL_FETCH=1' "$WORK/out" || { echo "FAIL: no word about BEARSSL_FETCH"; cat "$WORK/out"; exit 1; }
+[ ! -s "$WORK/nonet.log" ] || { echo "FAIL: fetch_bearssl.sh downloaded without BEARSSL_FETCH=1"; exit 1; }
+
+# 5. build/vendor/bearssl is the upstream tree of the pinned commit, byte for byte
+BEARSSL_TREE=$(sed -n 's/^BEARSSL_TREE="\([0-9a-f]*\)"$/\1/p' "$REPO_ROOT/build/fetch_bearssl.sh")
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    tree=$(cd "$REPO_ROOT" && GIT_INDEX_FILE="$WORK/vendor.index" git add -f build/vendor/bearssl \
+        && GIT_INDEX_FILE="$WORK/vendor.index" git write-tree --prefix=build/vendor/bearssl/)
+    [ "$tree" = "$BEARSSL_TREE" ] || { echo "FAIL: build/vendor/bearssl has tree $tree, not $BEARSSL_TREE (BearSSL $BEARSSL_COMMIT)"; exit 1; }
+else
+    echo "[*] not a git checkout: vendored BearSSL tree not checked"
+fi
+
+# 6. Nothing names the two download hosts outside the opt-in downloads (and the vendor notes)
+named=$(cd "$REPO_ROOT" && grep -rlI -e 'bearssl\.org' -e 'busybox\.net' .github build scripts tests tools \
+    --exclude-dir=bearssl --exclude-dir=tmp --exclude-dir=output --exclude-dir=toolchains \
+    --exclude-dir=node_modules --exclude=test_build_downloads.sh 2>/dev/null | sort | tr '\n' ' ')
+[ "$named" = "build/build_busybox.sh build/fetch_bearssl.sh build/vendor/README.md " ] \
+    || { echo "FAIL: bearssl.org or busybox.net named in: $named"; exit 1; }
+
+echo "PASS: build downloads are checked against their SHA-256, BearSSL and BusyBox build without network"

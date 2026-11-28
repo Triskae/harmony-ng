@@ -6,7 +6,7 @@ REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BEARSSL_DIR="${BEARSSL_DIR:-$REPO_ROOT/build/tmp/bearssl}"
 OUT="$REPO_ROOT/build/tmp/test_host/bearssl"
 BEARSSL_DIR="$BEARSSL_DIR" sh "$REPO_ROOT/build/fetch_bearssl.sh" >&2
-stamp=$(git -C "$BEARSSL_DIR" rev-parse HEAD)
+stamp=$(cat "$BEARSSL_DIR/.bearssl_commit")
 if [ ! -f "$OUT/libbearssl.a" ] || [ "$(cat "$OUT/stamp" 2>/dev/null)" != "$stamp" ]; then
     echo "[-] Building host libbearssl.a..." >&2
     rm -rf "$OUT"

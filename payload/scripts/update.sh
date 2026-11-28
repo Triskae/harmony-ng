@@ -168,8 +168,11 @@ download_retry() {
       rm -f "$FETCH_ERR" 2>/dev/null
       return 0
     fi
-    sleep 1
     i=$((i + 1))
+    # a wait between attempts only: after the last one it only delays the caller
+    if [ $i -le $max_attempts ]; then
+      sleep 1
+    fi
   done
   rm -f "$FETCH_ERR" 2>/dev/null
   return 1
@@ -397,13 +400,20 @@ is_version_newer() {
   }'
 }
 
-# source_version URL [quick]: the release the source's VERSION file names, "" when it cannot be
-# read (v2 checks v2/VERSION first). quick: v2/VERSION once (an official branch that is only
-# compared: a missing branch must not cost the retries and their waits)
+# source_version URL [quick|follow]: the release the source's VERSION file names, "" when it
+# cannot be read (v2 checks v2/VERSION first). quick: v2/VERSION once, then the plain VERSION
+# once (an official branch that is only compared: a missing branch must not cost the retries and
+# their waits). follow: the same with a second try of v2/VERSION (the official branch the Hub
+# follows: one failed read must not move a beta Hub to the stable branch). A v4 branch has only
+# the plain VERSION (scripts/publish_ota.py); on a v3 branch it says 1.14.0 (for 1.x Hubs), which
+# matches no 2.x or newer Hub.
 source_version() {
   _sv=""
-  if [ "$2" = quick ]; then
-    download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 1 && _sv=$(cat /tmp/ota_ver.$$ | tr -d '\r\n v')
+  if [ "$2" = quick ] || [ "$2" = follow ]; then
+    _tries=1
+    [ "$2" = follow ] && _tries=2
+    { download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 $_tries || \
+      download_retry "$1/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 1; } && _sv=$(cat /tmp/ota_ver.$$ | tr -d '\r\n v')
   elif download_retry "$1/v2/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
      download_retry "$1/VERSION_V2?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 2 || \
      download_retry "$1/VERSION?_=${TIMESTAMP}" /tmp/ota_ver.$$ 8 3; then
@@ -426,7 +436,9 @@ pick_official_branch() {
       _own=$(get_local_version)
       _other="$OTA_STABLE"
       [ "$REPO" = "$OTA_STABLE" ] && _other="$OTA_BETA"
-      if [ "$(source_version "$REPO" quick)" != "${_own#v}" ] && [ "$(source_version "$_other" quick)" = "${_own#v}" ]; then
+      # the branch the Hub follows gets the second try, as in check and apply: one failed read
+      # must not move it to the other branch; that one is only compared (one try each)
+      if [ "$(source_version "$REPO" follow)" != "${_own#v}" ] && [ "$(source_version "$_other" quick)" = "${_own#v}" ]; then
         REPO="$_other"
       fi
       ;;
@@ -434,7 +446,7 @@ pick_official_branch() {
       [ "$REPO" = "$OTA_BETA" ] || return 0
       # ota-beta carries the pre-releases of the next major version (v4) only: those are never
       # followed (v3 has no beta; v4 is announced through VERSION_V4)
-      _bv=$(source_version "$OTA_BETA" quick)
+      _bv=$(source_version "$OTA_BETA" follow)
       _stv=$(source_version "$OTA_STABLE")
       _own=$(get_local_version)
       if [ -z "$_bv" ] || [ "$(echo "$_bv" | cut -d. -f1)" != "$(echo "${_own#v}" | cut -d. -f1)" ] || \
